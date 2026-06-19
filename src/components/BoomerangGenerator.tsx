@@ -17,7 +17,6 @@ import {
   COLOR_PRESETS,
   DEFAULT_BOOMERANG_SETTINGS,
   BoomerangSettings,
-  boomerangPath,
   createBoomerangSvg,
   generateBoomerangElements,
 } from "@/lib/boomerang";
@@ -38,7 +37,7 @@ const numericControls: NumericControl[] = [
   { key: "density", label: "Hustota", min: 12, max: 120, step: 1 },
   { key: "scale", label: "Velkost", min: 0.45, max: 1.75, step: 0.01 },
   { key: "chaos", label: "Chaos", min: 0, max: 100, step: 1, suffix: "%" },
-  { key: "strokeWidth", label: "Hrubka ciar", min: 8, max: 52, step: 1 },
+  { key: "strokeWidth", label: "Hrubka ciar", min: 2, max: 18, step: 0.5 },
   { key: "rotation", label: "Rotacia", min: -180, max: 180, step: 1 },
 ];
 
@@ -354,7 +353,7 @@ export function BoomerangGenerator() {
                   {elements.map((element) => (
                     <motion.path
                       key={element.id}
-                      d={boomerangPath()}
+                      d={element.path}
                       fill="none"
                       stroke={element.stroke}
                       strokeWidth={element.strokeWidth}
