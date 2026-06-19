@@ -24,6 +24,13 @@ export type BoomerangElement = {
   opacity: number;
 };
 
+export type DetectedVectorShape = {
+  id: string;
+  d: string;
+  tone: "dark" | "light";
+  transform?: string;
+};
+
 export const DEFAULT_BOOMERANG_SETTINGS: BoomerangSettings = {
   density: 72,
   scale: 1,
@@ -435,7 +442,44 @@ export function generateBoomerangElements(
   return elements;
 }
 
-export function createBoomerangSvg(settings: BoomerangSettings) {
+export function detectedShapeColor(
+  settings: BoomerangSettings,
+  shape: DetectedVectorShape,
+  index: number,
+) {
+  if (shape.tone === "light") {
+    return index % 2 === 0 ? settings.primary : settings.accent;
+  }
+
+  return index % 2 === 0 ? settings.secondary : settings.accent;
+}
+
+export function createBoomerangSvg(
+  settings: BoomerangSettings,
+  detectedShapes: DetectedVectorShape[] = [],
+) {
+  if (detectedShapes.length > 0) {
+    const opacity = Math.min(1, Math.max(0.1, settings.opacity / 100));
+    const marks = detectedShapes
+      .map(
+        (shape, index) => `
+  <path d="${shape.d}"${
+    shape.transform ? ` transform="${shape.transform}"` : ""
+  } fill="${detectedShapeColor(
+    settings,
+    shape,
+    index,
+  )}" opacity="${opacity.toFixed(2)}" />`,
+      )
+      .join("");
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" viewBox="0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}">
+  <rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="${settings.background}" />
+  <g>${marks}
+  </g>
+</svg>`;
+  }
+
   const elements = generateBoomerangElements(settings);
   const marks = elements
     .map(

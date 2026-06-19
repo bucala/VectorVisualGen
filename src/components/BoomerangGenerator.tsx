@@ -8,6 +8,7 @@ import {
   Layers3,
   PenTool,
   RefreshCw,
+  ScanLine,
   Shuffle,
 } from "lucide-react";
 import { ChangeEvent, useMemo, useRef, useState } from "react";
@@ -17,9 +18,11 @@ import {
   COLOR_PRESETS,
   DEFAULT_BOOMERANG_SETTINGS,
   BoomerangSettings,
+  detectedShapeColor,
   createBoomerangSvg,
   generateBoomerangElements,
 } from "@/lib/boomerang";
+import { ImageTraceResult, traceImageFile } from "@/lib/image-tracing";
 
 type NumericControl = {
   key: keyof Pick<
@@ -72,11 +75,15 @@ export function BoomerangGenerator() {
     DEFAULT_BOOMERANG_SETTINGS,
   );
   const [assetName, setAssetName] = useState("default-boomerang");
+  const [detectedTrace, setDetectedTrace] = useState<ImageTraceResult | null>(
+    null,
+  );
+  const [traceStatus, setTraceStatus] = useState("No input");
   const [syncStatus, setSyncStatus] = useState("Ready");
   const svgRef = useRef<SVGSVGElement>(null);
   const elements = useMemo(
-    () => generateBoomerangElements(settings),
-    [settings],
+    () => (detectedTrace ? [] : generateBoomerangElements(settings)),
+    [detectedTrace, settings],
   );
 
   function updateSetting<Key extends keyof BoomerangSettings>(
@@ -107,11 +114,13 @@ export function BoomerangGenerator() {
   function resetDefault() {
     setSettings(DEFAULT_BOOMERANG_SETTINGS);
     setAssetName("default-boomerang");
+    setDetectedTrace(null);
+    setTraceStatus("No input");
     setSyncStatus("Ready");
   }
 
   function exportSvg() {
-    const svg = createBoomerangSvg(settings);
+    const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
     downloadBlob(
       new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
       `${assetName || "vectorvisualgen-boomerang"}.svg`,
@@ -119,7 +128,7 @@ export function BoomerangGenerator() {
   }
 
   async function exportPng() {
-    const svg = createBoomerangSvg(settings);
+    const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
     const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(svgBlob);
     const image = new Image();
@@ -148,7 +157,7 @@ export function BoomerangGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: assetName,
-          svg: createBoomerangSvg(settings),
+          svg: createBoomerangSvg(settings, detectedTrace?.shapes),
         }),
       });
       const result = (await response.json()) as { mode?: string };
@@ -158,10 +167,23 @@ export function BoomerangGenerator() {
     }
   }
 
-  function onUpload(event: ChangeEvent<HTMLInputElement>) {
+  async function onUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
     setAssetName(file.name.replace(/\.[^/.]+$/, "") || "custom-drawing");
+    setTraceStatus("Detecting");
+    setSyncStatus("Ready");
+
+    try {
+      const result = await traceImageFile(file);
+      setDetectedTrace(result);
+      setTraceStatus(`${result.shapes.length} paths`);
+    } catch {
+      setDetectedTrace(null);
+      setTraceStatus("Failed");
+    } finally {
+      event.target.value = "";
+    }
   }
 
   return (
@@ -320,6 +342,44 @@ export function BoomerangGenerator() {
           <p className="mt-3 rounded-2xl border border-black/10 bg-white/55 px-3 py-2 font-mono text-xs text-[#6b675e]">
             Figma: {syncStatus}
           </p>
+
+          <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <ScanLine size={17} />
+                <h2 className="text-sm font-semibold">Detekcia obrazu</h2>
+              </div>
+              <span className="font-mono text-xs text-[#6b675e]">
+                {traceStatus}
+              </span>
+            </div>
+
+            {detectedTrace ? (
+              <div className="space-y-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={detectedTrace.previewUrl}
+                  alt=""
+                  className="aspect-square w-full rounded-2xl border border-black/10 object-cover"
+                />
+                <div className="grid grid-cols-3 gap-2 font-mono text-[11px] text-[#6b675e]">
+                  <span className="rounded-xl bg-white/70 px-2 py-1">
+                    {detectedTrace.sourceWidth}x{detectedTrace.sourceHeight}
+                  </span>
+                  <span className="rounded-xl bg-white/70 px-2 py-1">
+                    {Math.round(detectedTrace.coverage * 100)}%
+                  </span>
+                  <span className="rounded-xl bg-white/70 px-2 py-1">
+                    {detectedTrace.components} comp
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-black/15 bg-white/45 px-3 py-4 text-center text-xs text-[#6b675e]">
+                Ziadny raster
+              </div>
+            )}
+          </section>
         </aside>
 
         <section className="relative overflow-hidden px-4 py-5 sm:px-8 lg:px-10">
@@ -331,7 +391,9 @@ export function BoomerangGenerator() {
                   {assetName}
                 </p>
                 <h2 className="mt-1 text-3xl font-semibold tracking-normal sm:text-4xl">
-                  Retro boomerang pattern
+                  {detectedTrace
+                    ? "Detected vector pattern"
+                    : "Retro boomerang pattern"}
                 </h2>
               </div>
               <div className="rounded-full border border-white/70 bg-white/65 px-4 py-2 font-mono text-xs shadow-sm backdrop-blur-xl">
@@ -358,7 +420,28 @@ export function BoomerangGenerator() {
                   fill={settings.background}
                 />
                 <g>
-                  {elements.map((element) => (
+                  {detectedTrace
+                    ? detectedTrace.shapes.map((shape, index) => (
+                        <motion.path
+                          key={shape.id}
+                          d={shape.d}
+                          transform={shape.transform}
+                          fill={detectedShapeColor(settings, shape, index)}
+                          opacity={Math.min(
+                            1,
+                            Math.max(0.1, settings.opacity / 100),
+                          )}
+                          initial={{ opacity: 0 }}
+                          animate={{
+                            opacity: Math.min(
+                              1,
+                              Math.max(0.1, settings.opacity / 100),
+                            ),
+                          }}
+                          transition={{ duration: 0.3, ease: "easeOut" }}
+                        />
+                      ))
+                    : elements.map((element) => (
                     <motion.path
                       key={element.id}
                       d={element.path}
@@ -377,7 +460,7 @@ export function BoomerangGenerator() {
                       }}
                       transition={{ duration: 0.45, ease: "easeOut" }}
                     />
-                  ))}
+                      ))}
                 </g>
               </svg>
             </motion.div>
