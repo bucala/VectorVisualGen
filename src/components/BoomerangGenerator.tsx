@@ -27,7 +27,13 @@ import { ImageTraceResult, traceImageFile } from "@/lib/image-tracing";
 type NumericControl = {
   key: keyof Pick<
     BoomerangSettings,
-    "density" | "scale" | "chaos" | "strokeWidth" | "opacity" | "rotation"
+    | "density"
+    | "scale"
+    | "chaos"
+    | "strokeWidth"
+    | "opacity"
+    | "blur"
+    | "rotation"
   >;
   label: string;
   min: number;
@@ -41,10 +47,11 @@ const numericControls: NumericControl[] = [
   { key: "scale", label: "Velkost", min: 0.45, max: 1.75, step: 0.01 },
   { key: "chaos", label: "Chaos", min: 0, max: 100, step: 1, suffix: "%" },
   { key: "strokeWidth", label: "Hrubka ciar", min: 2, max: 18, step: 0.5 },
+  { key: "blur", label: "Rozmazanie", min: 0, max: 100, step: 1, suffix: "%" },
   {
     key: "opacity",
     label: "Priehladnost",
-    min: 10,
+    min: 0,
     max: 100,
     step: 1,
     suffix: "%",
@@ -85,6 +92,8 @@ export function BoomerangGenerator() {
     () => (detectedTrace ? [] : generateBoomerangElements(settings)),
     [detectedTrace, settings],
   );
+  const blurRadius = (settings.blur / 100) * 7.5;
+  const overlayOpacity = 0.16 + (settings.opacity / 100) * 0.34;
 
   function updateSetting<Key extends keyof BoomerangSettings>(
     key: Key,
@@ -419,47 +428,99 @@ export function BoomerangGenerator() {
                   height={CANVAS_SIZE}
                   fill={settings.background}
                 />
+                {blurRadius > 0 ? (
+                  <defs>
+                    <filter
+                      id="line-blur-preview"
+                      x="-12%"
+                      y="-12%"
+                      width="124%"
+                      height="124%"
+                      colorInterpolationFilters="sRGB"
+                    >
+                      <feGaussianBlur stdDeviation={blurRadius} />
+                    </filter>
+                  </defs>
+                ) : null}
                 <g>
                   {detectedTrace
-                    ? detectedTrace.shapes.map((shape, index) => (
-                        <motion.path
-                          key={shape.id}
-                          d={shape.d}
-                          transform={shape.transform}
-                          fill={detectedShapeColor(settings, shape, index)}
-                          opacity={Math.min(
-                            1,
-                            Math.max(0.1, settings.opacity / 100),
-                          )}
-                          initial={{ opacity: 0 }}
-                          animate={{
-                            opacity: Math.min(
-                              1,
-                              Math.max(0.1, settings.opacity / 100),
-                            ),
-                          }}
-                          transition={{ duration: 0.3, ease: "easeOut" }}
-                        />
-                      ))
+                    ? detectedTrace.shapes.map((shape, index) => {
+                        const fill = detectedShapeColor(settings, shape, index);
+
+                        return (
+                          <g key={shape.id}>
+                            {blurRadius > 0 ? (
+                              <path
+                                d={shape.d}
+                                transform={shape.transform}
+                                fill={fill}
+                                opacity={0.38}
+                                filter="url(#line-blur-preview)"
+                              />
+                            ) : null}
+                            <motion.path
+                              d={shape.d}
+                              transform={shape.transform}
+                              fill={fill}
+                              opacity={1}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ duration: 0.3, ease: "easeOut" }}
+                            />
+                            <path
+                              d={shape.d}
+                              transform={shape.transform}
+                              fill={fill}
+                              opacity={overlayOpacity}
+                            />
+                          </g>
+                        );
+                      })
                     : elements.map((element) => (
-                    <motion.path
-                      key={element.id}
-                      d={element.path}
-                      fill="none"
-                      stroke={element.stroke}
-                      strokeWidth={element.strokeWidth}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      opacity={element.opacity}
-                      vectorEffect="non-scaling-stroke"
-                      transform={`translate(${element.x} ${element.y}) rotate(${element.rotation}) scale(${element.scale})`}
-                      initial={{ pathLength: 0, opacity: 0 }}
-                      animate={{
-                        pathLength: 1,
-                        opacity: element.opacity,
-                      }}
-                      transition={{ duration: 0.45, ease: "easeOut" }}
-                    />
+                        <g key={element.id}>
+                          {element.blur > 0 ? (
+                            <path
+                              d={element.path}
+                              fill="none"
+                              stroke={element.stroke}
+                              strokeWidth={element.strokeWidth}
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              opacity={0.4}
+                              filter="url(#line-blur-preview)"
+                              vectorEffect="non-scaling-stroke"
+                              transform={`translate(${element.x} ${element.y}) rotate(${element.rotation}) scale(${element.scale})`}
+                            />
+                          ) : null}
+                          <motion.path
+                            d={element.path}
+                            fill="none"
+                            stroke={element.stroke}
+                            strokeWidth={element.strokeWidth}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            opacity={1}
+                            vectorEffect="non-scaling-stroke"
+                            transform={`translate(${element.x} ${element.y}) rotate(${element.rotation}) scale(${element.scale})`}
+                            initial={{ pathLength: 0, opacity: 0 }}
+                            animate={{
+                              pathLength: 1,
+                              opacity: 1,
+                            }}
+                            transition={{ duration: 0.45, ease: "easeOut" }}
+                          />
+                          <path
+                            d={element.path}
+                            fill="none"
+                            stroke={element.stroke}
+                            strokeWidth={element.strokeWidth}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            opacity={element.opacity}
+                            vectorEffect="non-scaling-stroke"
+                            transform={`translate(${element.x} ${element.y}) rotate(${element.rotation}) scale(${element.scale})`}
+                          />
+                        </g>
                       ))}
                 </g>
               </svg>

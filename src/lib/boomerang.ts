@@ -4,6 +4,7 @@ export type BoomerangSettings = {
   chaos: number;
   strokeWidth: number;
   opacity: number;
+  blur: number;
   rotation: number;
   background: string;
   primary: string;
@@ -22,6 +23,8 @@ export type BoomerangElement = {
   stroke: string;
   strokeWidth: number;
   opacity: number;
+  blur: number;
+  layer: number;
 };
 
 export type DetectedVectorShape = {
@@ -36,7 +39,8 @@ export const DEFAULT_BOOMERANG_SETTINGS: BoomerangSettings = {
   scale: 1,
   chaos: 58,
   strokeWidth: 4,
-  opacity: 62,
+  opacity: 35,
+  blur: 0,
   rotation: -18,
   background: "#19120f",
   primary: "#f1e7d0",
@@ -388,55 +392,73 @@ export function generateBoomerangElements(
 ): BoomerangElement[] {
   const random = mulberry32(settings.seed);
   const elements: BoomerangElement[] = [];
-  const count = Math.round(24 + settings.density * 0.55);
-  const columns = Math.max(6, Math.round(Math.sqrt(count) * 1.05));
-  const rows = Math.ceil(count / columns);
+  const count = Math.round(42 + settings.density * 0.78);
+  const layerCount = 3;
+  const countPerLayer = Math.ceil(count / layerCount);
+  const columns = Math.max(4, Math.ceil(Math.sqrt(countPerLayer * 1.08)));
+  const rows = Math.ceil(countPerLayer / columns);
   const cellX = CANVAS_SIZE / columns;
   const cellY = CANVAS_SIZE / rows;
   const chaos = settings.chaos / 100;
   const palette = [settings.primary, settings.secondary, settings.accent];
+  const blur = (settings.blur / 100) * 7.5;
 
-  for (let index = 0; index < count; index += 1) {
-    const col = index % columns;
-    const row = Math.floor(index / columns);
-    const layer = index % 3;
-    const offsetX = row % 2 === 0 ? cellX * 0.28 : -cellX * 0.2;
-    const baseX = col * cellX + cellX / 2 + offsetX;
-    const baseY = row * cellY + cellY / 2 + (layer - 1) * cellY * 0.08;
-    const wave = Math.sin((row * 0.73 + col * 0.41) * Math.PI) * cellX * 0.12;
-    const x = baseX + wave + jitter(random, cellX * (0.48 + chaos * 0.7));
-    const y = baseY + jitter(random, cellY * (0.5 + chaos * 0.78));
-    const rotationalStep = ((col * 47 + row * 31 + layer * 53) % 360) - 180;
-    const rotation =
-      settings.rotation +
-      rotationalStep * (0.38 + chaos * 0.62) +
-      jitter(random, 118 * chaos);
-    const scale =
-      settings.scale *
-      (0.34 +
-        random() * 0.26 +
-        layer * 0.08 +
-        (row % 2) * 0.035 +
-        chaos * 0.08);
-    const colorIndex = Math.abs(
-      Math.round(col + row * 2 + random() * 2.4),
-    ) % palette.length;
+  for (let layer = 0; layer < layerCount; layer += 1) {
+    const layerOffsetX = (layer - 1) * cellX * 0.38;
+    const layerOffsetY = (layer === 1 ? -0.18 : layer * 0.14) * cellY;
 
-    elements.push({
-      id: `boomerang-${index}`,
-      path: createClosedBoomerangPath(random, chaos, index),
-      x,
-      y,
-      scale,
-      rotation,
-      stroke: palette[colorIndex],
-      strokeWidth: settings.strokeWidth * (0.72 + random() * 0.38),
-      opacity: Math.min(
-        1,
-        (settings.opacity / 100) *
-          (0.82 + layer * 0.08 + random() * 0.08),
-      ),
-    });
+    for (let layerIndex = 0; layerIndex < countPerLayer; layerIndex += 1) {
+      const index = layer * countPerLayer + layerIndex;
+      if (index >= count) continue;
+
+      const col = layerIndex % columns;
+      const row = Math.floor(layerIndex / columns);
+      const rowShift = row % 2 === 0 ? cellX * 0.18 : -cellX * 0.14;
+      const baseX = col * cellX + cellX / 2 + layerOffsetX + rowShift;
+      const baseY = row * cellY + cellY / 2 + layerOffsetY;
+      const wave =
+        Math.sin((row * 0.73 + col * 0.41 + layer * 0.27) * Math.PI) *
+        cellX *
+        0.08;
+      const safeJitterX = cellX * (0.08 + chaos * 0.2);
+      const safeJitterY = cellY * (0.08 + chaos * 0.2);
+      const x =
+        (((baseX + wave + jitter(random, safeJitterX)) % CANVAS_SIZE) +
+          CANVAS_SIZE) %
+        CANVAS_SIZE;
+      const y = Math.min(
+        CANVAS_SIZE + cellY * 0.12,
+        Math.max(-cellY * 0.12, baseY + jitter(random, safeJitterY)),
+      );
+      const rotationalStep =
+        ((col * 47 + row * 31 + layer * 83 + layerIndex * 19) % 360) - 180;
+      const rotation =
+        settings.rotation +
+        rotationalStep * (0.42 + chaos * 0.58) +
+        jitter(random, 72 * chaos);
+      const rawScale =
+        settings.scale *
+        (0.28 +
+          random() * 0.14 +
+          layer * 0.035 +
+          (row % 2) * 0.025 +
+          chaos * 0.045);
+      const scale = Math.min(rawScale, Math.min(cellX, cellY) / 320);
+
+      elements.push({
+        id: `boomerang-${index}`,
+        path: createClosedBoomerangPath(random, chaos, index),
+        x,
+        y,
+        scale,
+        rotation,
+        stroke: palette[layer],
+        strokeWidth: settings.strokeWidth * (0.82 + random() * 0.24),
+        opacity: 0.18 + (settings.opacity / 100) * 0.42,
+        blur,
+        layer,
+      });
+    }
   }
 
   return elements;
@@ -458,22 +480,52 @@ export function createBoomerangSvg(
   settings: BoomerangSettings,
   detectedShapes: DetectedVectorShape[] = [],
 ) {
+  const blur = (settings.blur / 100) * 7.5;
+  const filterDef =
+    blur > 0
+      ? `
+  <defs>
+    <filter id="line-blur" x="-12%" y="-12%" width="124%" height="124%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="${blur.toFixed(2)}" />
+    </filter>
+  </defs>`
+      : "";
+
   if (detectedShapes.length > 0) {
-    const opacity = Math.min(1, Math.max(0.1, settings.opacity / 100));
+    const overlayOpacity = 0.16 + (settings.opacity / 100) * 0.34;
     const marks = detectedShapes
       .map(
         (shape, index) => `
+  ${
+    blur > 0
+      ? `<path d="${shape.d}"${
+          shape.transform ? ` transform="${shape.transform}"` : ""
+        } fill="${detectedShapeColor(
+          settings,
+          shape,
+          index,
+        )}" opacity="0.38" filter="url(#line-blur)" />`
+      : ""
+  }
   <path d="${shape.d}"${
     shape.transform ? ` transform="${shape.transform}"` : ""
   } fill="${detectedShapeColor(
     settings,
     shape,
     index,
-  )}" opacity="${opacity.toFixed(2)}" />`,
+  )}" opacity="1" />
+  <path d="${shape.d}"${
+    shape.transform ? ` transform="${shape.transform}"` : ""
+  } fill="${detectedShapeColor(
+    settings,
+    shape,
+    index,
+  )}" opacity="${overlayOpacity.toFixed(2)}" />`,
       )
       .join("");
 
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" viewBox="0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}">
+  ${filterDef}
   <rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="${settings.background}" />
   <g>${marks}
   </g>
@@ -481,6 +533,37 @@ export function createBoomerangSvg(
   }
 
   const elements = generateBoomerangElements(settings);
+  const blurredMarks =
+    blur > 0
+      ? elements
+          .map(
+            (element) => `
+  <path d="${element.path}" transform="translate(${element.x.toFixed(
+    2,
+  )} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(
+    2,
+  )}) scale(${element.scale.toFixed(3)})" fill="none" stroke="${
+    element.stroke
+  }" stroke-width="${element.strokeWidth.toFixed(
+    2,
+  )}" stroke-linecap="round" stroke-linejoin="round" opacity="0.4" filter="url(#line-blur)" vector-effect="non-scaling-stroke" />`,
+          )
+          .join("")
+      : "";
+  const overlayMarks = elements
+    .map(
+      (element) => `
+  <path d="${element.path}" transform="translate(${element.x.toFixed(
+    2,
+  )} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(
+    2,
+  )}) scale(${element.scale.toFixed(3)})" fill="none" stroke="${
+    element.stroke
+  }" stroke-width="${element.strokeWidth.toFixed(
+    2,
+  )}" stroke-linecap="round" stroke-linejoin="round" opacity="1" vector-effect="non-scaling-stroke" />`,
+    )
+    .join("");
   const marks = elements
     .map(
       (element) => `
@@ -499,8 +582,13 @@ export function createBoomerangSvg(
     .join("");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" viewBox="0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}">
+  ${filterDef}
   <rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="${settings.background}" />
+  <g>${blurredMarks}
+  </g>
   <g>${marks}
+  </g>
+  <g>${overlayMarks}
   </g>
 </svg>`;
 }
