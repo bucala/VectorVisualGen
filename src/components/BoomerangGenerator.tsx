@@ -8,8 +8,10 @@ import {
   Layers3,
   PenTool,
   RefreshCw,
+  Save,
   ScanLine,
   Shuffle,
+  Trash2,
 } from "lucide-react";
 import { ChangeEvent, useMemo, useRef, useState } from "react";
 
@@ -40,6 +42,13 @@ type NumericControl = {
   max: number;
   step: number;
   suffix?: string;
+};
+
+type SavedGalleryItem = {
+  id: string;
+  name: string;
+  dataUrl: string;
+  createdAt: string;
 };
 
 const numericControls: NumericControl[] = [
@@ -77,6 +86,15 @@ function downloadBlob(blob: Blob, fileName: string) {
   URL.revokeObjectURL(url);
 }
 
+function downloadDataUrl(dataUrl: string, fileName: string) {
+  const anchor = document.createElement("a");
+  anchor.href = dataUrl;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 export function BoomerangGenerator() {
   const [settings, setSettings] = useState<BoomerangSettings>(
     DEFAULT_BOOMERANG_SETTINGS,
@@ -87,6 +105,7 @@ export function BoomerangGenerator() {
   );
   const [traceStatus, setTraceStatus] = useState("No input");
   const [syncStatus, setSyncStatus] = useState("Ready");
+  const [savedGallery, setSavedGallery] = useState<SavedGalleryItem[]>([]);
   const svgRef = useRef<SVGSVGElement>(null);
   const elements = useMemo(
     () => (detectedTrace ? [] : generateBoomerangElements(settings)),
@@ -136,7 +155,7 @@ export function BoomerangGenerator() {
     );
   }
 
-  async function exportPng() {
+  async function renderCurrentPatternCanvas(scale = 1) {
     const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
     const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(svgBlob);
@@ -146,16 +165,50 @@ export function BoomerangGenerator() {
     await image.decode();
 
     const canvas = document.createElement("canvas");
-    canvas.width = CANVAS_SIZE * 2;
-    canvas.height = CANVAS_SIZE * 2;
+    canvas.width = CANVAS_SIZE * scale;
+    canvas.height = CANVAS_SIZE * scale;
     const context = canvas.getContext("2d");
-    if (!context) return;
+    if (!context) {
+      URL.revokeObjectURL(url);
+      throw new Error("Canvas context is unavailable.");
+    }
 
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(url);
-    canvas.toBlob((blob) => {
-      if (blob) downloadBlob(blob, `${assetName || "boomerang"}-2400.png`);
-    }, "image/png");
+    return canvas;
+  }
+
+  async function exportPng() {
+    try {
+      const canvas = await renderCurrentPatternCanvas(2);
+
+      canvas.toBlob((blob) => {
+        if (blob) downloadBlob(blob, `${assetName || "boomerang"}-2400.png`);
+      }, "image/png");
+    } catch {
+      setSyncStatus("PNG failed");
+    }
+  }
+
+  async function saveToGallery() {
+    try {
+      const canvas = await renderCurrentPatternCanvas();
+      const dataUrl = canvas.toDataURL("image/png");
+      const createdAt = new Date().toISOString();
+
+      setSavedGallery((current) => [
+        {
+          id: `gallery-${createdAt}`,
+          name: `${assetName || "boomerang"}-${current.length + 1}`,
+          dataUrl,
+          createdAt,
+        },
+        ...current,
+      ]);
+      setSyncStatus("Saved");
+    } catch {
+      setSyncStatus("Gallery failed");
+    }
   }
 
   async function syncToFigma() {
@@ -197,8 +250,8 @@ export function BoomerangGenerator() {
 
   return (
     <main className="min-h-screen bg-[#e8ece8] text-[#191716]">
-      <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[390px_minmax(0,1fr)]">
-        <aside className="border-b border-black/10 bg-white/62 px-5 py-5 backdrop-blur-xl lg:border-b-0 lg:border-r">
+      <div className="flex min-h-screen flex-col-reverse lg:flex-row">
+        <aside className="border-t border-black/10 bg-white/62 px-5 py-5 backdrop-blur-xl lg:w-[390px] lg:shrink-0 lg:border-r lg:border-t-0">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#6b675e]">
@@ -293,7 +346,7 @@ export function BoomerangGenerator() {
               {(
                 [
                   ["background", "Pozadie"],
-                  ["primary", "Farba 1"],
+                  ["primary", "Hlavná"],
                   ["secondary", "Farba 2"],
                   ["accent", "Farba 3"],
                 ] as const
@@ -391,7 +444,7 @@ export function BoomerangGenerator() {
           </section>
         </aside>
 
-        <section className="relative overflow-hidden px-4 py-5 sm:px-8 lg:px-10">
+        <section className="relative flex-1 overflow-hidden px-4 py-5 sm:px-8 lg:px-10">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_15%,rgba(255,255,255,0.75),transparent_32%),linear-gradient(135deg,#e8ece8,#d6ddd6_45%,#f2ede5)]" />
           <div className="relative mx-auto flex max-w-7xl flex-col gap-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -526,6 +579,17 @@ export function BoomerangGenerator() {
               </svg>
             </motion.div>
 
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={saveToGallery}
+                className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#191716] px-5 text-sm font-semibold text-white shadow-lg shadow-black/15 transition hover:-translate-y-0.5 hover:bg-[#2b2722]"
+              >
+                <Save size={16} />
+                Uložiť do galérie
+              </button>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-4">
               {referenceImages.map((src) => (
                 <div
@@ -541,6 +605,62 @@ export function BoomerangGenerator() {
                 </div>
               ))}
             </div>
+
+            <section className="rounded-[28px] border border-white/70 bg-white/45 p-4 shadow-sm backdrop-blur-xl">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold tracking-normal">
+                  Galéria
+                </h2>
+                {savedGallery.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setSavedGallery([])}
+                    className="flex h-9 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white px-3 text-xs font-semibold shadow-sm transition hover:-translate-y-0.5"
+                  >
+                    <Trash2 size={14} />
+                    Vyčistiť
+                  </button>
+                ) : null}
+              </div>
+
+              {savedGallery.length > 0 ? (
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {savedGallery.map((item) => (
+                    <article
+                      key={item.id}
+                      className="overflow-hidden rounded-3xl border border-white/70 bg-white/65 p-2 shadow-sm"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={item.dataUrl}
+                        alt=""
+                        className="aspect-square w-full rounded-2xl object-cover"
+                      />
+                      <div className="mt-2 flex items-center justify-between gap-2 px-1">
+                        <span className="truncate font-mono text-[11px] text-[#6b675e]">
+                          {item.name}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            downloadDataUrl(item.dataUrl, `${item.name}.png`)
+                          }
+                          className="grid size-8 shrink-0 place-items-center rounded-full border border-black/10 bg-white shadow-sm transition hover:-translate-y-0.5"
+                          aria-label="Download saved pattern"
+                          title="Download"
+                        >
+                          <Download size={14} />
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-black/15 bg-white/45 px-3 py-5 text-center text-xs text-[#6b675e]">
+                  Žiadne uložené vzory
+                </div>
+              )}
+            </section>
           </div>
         </section>
       </div>

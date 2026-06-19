@@ -82,6 +82,7 @@ export const COLOR_PRESETS = [
 ];
 
 export const CANVAS_SIZE = 1200;
+export const MAIN_LAYER_INDEX = 0;
 
 type Point = {
   x: number;
@@ -234,6 +235,7 @@ export function generateBoomerangElements(
   const cellY = CANVAS_SIZE / rows;
   const baseRadius = 38 * settings.scale;
   const minPadding = Math.max(4, 13 - settings.density * 0.06);
+  const mainLayerPaddingBoost = 1.12;
 
   for (let layer = 0; layer < layerCount; layer += 1) {
     const order = shuffledIndexes(columns * rows, random);
@@ -268,9 +270,16 @@ export function generateBoomerangElements(
           CANVAS_SIZE +
           CANVAS_SIZE) %
         CANVAS_SIZE;
-      const bounds = { x, y, radius };
+      const isMainLayer = layer === MAIN_LAYER_INDEX;
+      const collisionRadius = isMainLayer
+        ? radius * mainLayerPaddingBoost
+        : radius;
+      const layerPadding = isMainLayer
+        ? minPadding * mainLayerPaddingBoost
+        : minPadding;
+      const bounds = { x, y, radius: collisionRadius };
       const collides = placedByLayer[layer].some((placed) =>
-        boundsCollide(bounds, placed, minPadding),
+        boundsCollide(bounds, placed, layerPadding),
       );
 
       if (collides) continue;
