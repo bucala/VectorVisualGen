@@ -44,6 +44,13 @@ npm run deploy
 
 The committed `wrangler.toml` uses `.open-next/worker.js`, `.open-next/assets`, and `nodejs_compat`.
 
+For Cloudflare Workers Builds, use:
+
+- Build command: `npm run build`
+- Deploy command: `npx wrangler deploy`
+
+`npm run build` runs the OpenNext Cloudflare adapter and writes the `.open-next` output that Wrangler deploys.
+
 ## Figma
 
 Create `.env.local` from `.env.example`:
