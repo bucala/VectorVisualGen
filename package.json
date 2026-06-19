@@ -8,6 +8,7 @@
     "build:next": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
     "preview": "npm run build && opennextjs-cloudflare preview",
     "deploy": "npm run build && opennextjs-cloudflare deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"

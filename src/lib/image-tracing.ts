@@ -4,6 +4,7 @@ import { CANVAS_SIZE, DetectedVectorShape } from "@/lib/boomerang";
 
 const TRACE_SIZE = 768;
 const MIN_COMPONENT_AREA = 12;
+const MAX_SOURCE_PIXELS = 12_000_000;
 
 type Rgb = {
   r: number;
@@ -304,6 +305,9 @@ export async function traceImageFile(file: File): Promise<ImageTraceResult> {
   const image = await loadImage(file);
   const sourceWidth = image.naturalWidth || image.width;
   const sourceHeight = image.naturalHeight || image.height;
+  if (sourceWidth * sourceHeight > MAX_SOURCE_PIXELS) {
+    throw new Error("Image dimensions are too large.");
+  }
   const canvas = document.createElement("canvas");
   canvas.width = TRACE_SIZE;
   canvas.height = TRACE_SIZE;

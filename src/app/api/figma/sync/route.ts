@@ -1,30 +1,92 @@
 import { NextResponse } from "next/server";
 
-type FigmaSyncBody = {
-  name?: string;
-  svg?: string;
-};
+import {
+  createFigmaBridgePayload,
+  MAX_FIGMA_JSON_BYTES,
+  parseFigmaSyncBody,
+} from "@/lib/figma-sync";
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 30;
+const rateLimits = new Map<string, { count: number; resetAt: number }>();
+
+function clientKey(request: Request) {
+  return (
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "local"
+  );
+}
+
+function rateLimit(request: Request) {
+  const now = Date.now();
+  const key = clientKey(request);
+  const bucket = rateLimits.get(key);
+
+  if (!bucket || bucket.resetAt <= now) {
+    rateLimits.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return null;
+  }
+
+  bucket.count += 1;
+  if (bucket.count > RATE_LIMIT_MAX) {
+    return NextResponse.json(
+      { ok: false, error: "Too many Figma bridge requests." },
+      { status: 429 },
+    );
+  }
+
+  return null;
+}
+
+function isAuthorized(request: Request) {
+  const secret = process.env.FIGMA_SYNC_SECRET;
+  if (!secret) return true;
+
+  return request.headers.get("x-vectorvisualgen-token") === secret;
+}
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as FigmaSyncBody;
-
-  if (!body.svg) {
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (contentLength > MAX_FIGMA_JSON_BYTES) {
     return NextResponse.json(
-      { ok: false, error: "Missing SVG payload." },
-      { status: 400 },
+      { ok: false, error: "Payload is too large." },
+      { status: 413 },
+    );
+  }
+
+  const limited = rateLimit(request);
+  if (limited) return limited;
+
+  if (!isAuthorized(request)) {
+    return NextResponse.json(
+      { ok: false, error: "Unauthorized Figma bridge request." },
+      { status: 401 },
+    );
+  }
+
+  const parsed = parseFigmaSyncBody(await request.text());
+  if (!parsed.ok) {
+    return NextResponse.json(
+      { ok: false, error: parsed.error },
+      { status: parsed.status },
     );
   }
 
   const fileKey = process.env.FIGMA_FILE_KEY;
   const nodeId = process.env.FIGMA_NODE_ID;
   const token = process.env.FIGMA_ACCESS_TOKEN;
+  const bridgePayload = createFigmaBridgePayload(parsed.body, {
+    fileKey,
+    nodeId,
+  });
 
   if (!fileKey || !nodeId || !token) {
     return NextResponse.json({
       ok: true,
-      mode: "dry-run",
-      name: body.name ?? "vectorvisualgen-pattern",
-      bytes: body.svg.length,
+      mode: "bridge-ready",
+      targetVerified: false,
+      payload: bridgePayload,
     });
   }
 
@@ -52,8 +114,8 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    mode: "figma-connected",
-    name: body.name ?? "vectorvisualgen-pattern",
-    bytes: body.svg.length,
+    mode: "bridge-ready",
+    targetVerified: true,
+    payload: bridgePayload,
   });
 }

@@ -19,6 +19,7 @@ import {
   CANVAS_SIZE,
   COLOR_PRESETS,
   DEFAULT_BOOMERANG_SETTINGS,
+  LayerId,
   BoomerangSettings,
   detectedShapeColor,
   createBoomerangSvg,
@@ -29,13 +30,7 @@ import { ImageTraceResult, traceImageFile } from "@/lib/image-tracing";
 type NumericControl = {
   key: keyof Pick<
     BoomerangSettings,
-    | "density"
-    | "scale"
-    | "chaos"
-    | "strokeWidth"
-    | "opacity"
-    | "blur"
-    | "rotation"
+    "density" | "strokeWidth" | "blur" | "rotation"
   >;
   label: string;
   min: number;
@@ -53,27 +48,13 @@ type SavedGalleryItem = {
 
 const numericControls: NumericControl[] = [
   { key: "density", label: "Hustota", min: 12, max: 120, step: 1 },
-  { key: "scale", label: "Velkost", min: 0.45, max: 1.75, step: 0.01 },
-  { key: "chaos", label: "Chaos", min: 0, max: 100, step: 1, suffix: "%" },
   { key: "strokeWidth", label: "Hrubka ciar", min: 0.5, max: 3, step: 0.1 },
   { key: "blur", label: "Rozmazanie", min: 0, max: 100, step: 1, suffix: "%" },
-  {
-    key: "opacity",
-    label: "Priehladnost",
-    min: 0,
-    max: 100,
-    step: 1,
-    suffix: "%",
-  },
   { key: "rotation", label: "Rotacia", min: -180, max: 180, step: 1 },
 ];
 
-const referenceImages = [
-  "/references/ebony-red-boomerang.avif",
-  "/references/ebony-turquoise-boomerang.avif",
-  "/references/glacier-boomerang.avif",
-  "/references/red-glacier.avif",
-];
+const MAX_GALLERY_ITEMS = 12;
+const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
@@ -104,7 +85,9 @@ export function BoomerangGenerator() {
     null,
   );
   const [traceStatus, setTraceStatus] = useState("No input");
-  const [syncStatus, setSyncStatus] = useState("Ready");
+  const [figmaStatus, setFigmaStatus] = useState("Ready");
+  const [galleryStatus, setGalleryStatus] = useState("Ready");
+  const [exportStatus, setExportStatus] = useState("Ready");
   const [savedGallery, setSavedGallery] = useState<SavedGalleryItem[]>([]);
   const svgRef = useRef<SVGSVGElement>(null);
   const elements = useMemo(
@@ -112,7 +95,6 @@ export function BoomerangGenerator() {
     [detectedTrace, settings],
   );
   const blurRadius = (settings.blur / 100) * 7.5;
-  const overlayOpacity = (settings.opacity / 100) * 0.28;
 
   function updateSetting<Key extends keyof BoomerangSettings>(
     key: Key,
@@ -121,13 +103,27 @@ export function BoomerangGenerator() {
     setSettings((current) => ({ ...current, [key]: value }));
   }
 
+  function updateLayer<Key extends "color" | "scale" | "chaos" | "opacity">(
+    layerId: LayerId,
+    key: Key,
+    value: BoomerangSettings["layers"][number][Key],
+  ) {
+    setSettings((current) => ({
+      ...current,
+      layers: current.layers.map((layer) =>
+        layer.id === layerId ? { ...layer, [key]: value } : layer,
+      ),
+    }));
+  }
+
   function applyPreset(preset: (typeof COLOR_PRESETS)[number]) {
     setSettings((current) => ({
       ...current,
       background: preset.background,
-      primary: preset.primary,
-      secondary: preset.secondary,
-      accent: preset.accent,
+      layers: current.layers.map((layer, index) => ({
+        ...layer,
+        color: preset.layers[index] ?? layer.color,
+      })),
     }));
   }
 
@@ -136,7 +132,8 @@ export function BoomerangGenerator() {
       ...current,
       seed: Math.floor(Math.random() * 100000),
     }));
-    setSyncStatus("Ready");
+    setFigmaStatus("Ready");
+    setExportStatus("Ready");
   }
 
   function resetDefault() {
@@ -144,7 +141,9 @@ export function BoomerangGenerator() {
     setAssetName("default-boomerang");
     setDetectedTrace(null);
     setTraceStatus("No input");
-    setSyncStatus("Ready");
+    setFigmaStatus("Ready");
+    setGalleryStatus("Ready");
+    setExportStatus("Ready");
   }
 
   function exportSvg() {
@@ -153,6 +152,7 @@ export function BoomerangGenerator() {
       new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
       `${assetName || "vectorvisualgen-boomerang"}.svg`,
     );
+    setExportStatus("SVG ready");
   }
 
   async function renderCurrentPatternCanvas(scale = 1) {
@@ -186,7 +186,7 @@ export function BoomerangGenerator() {
         if (blob) downloadBlob(blob, `${assetName || "boomerang"}-2400.png`);
       }, "image/png");
     } catch {
-      setSyncStatus("PNG failed");
+      setExportStatus("PNG failed");
     }
   }
 
@@ -204,15 +204,15 @@ export function BoomerangGenerator() {
           createdAt,
         },
         ...current,
-      ]);
-      setSyncStatus("Saved");
+      ].slice(0, MAX_GALLERY_ITEMS));
+      setGalleryStatus("Saved");
     } catch {
-      setSyncStatus("Gallery failed");
+      setGalleryStatus("Gallery failed");
     }
   }
 
   async function syncToFigma() {
-    setSyncStatus("Syncing");
+    setFigmaStatus("Preparing");
     try {
       const response = await fetch("/api/figma/sync", {
         method: "POST",
@@ -222,19 +222,40 @@ export function BoomerangGenerator() {
           svg: createBoomerangSvg(settings, detectedTrace?.shapes),
         }),
       });
-      const result = (await response.json()) as { mode?: string };
-      setSyncStatus(result.mode === "dry-run" ? "Dry run" : "Synced");
+      const result = (await response.json()) as {
+        ok?: boolean;
+        mode?: string;
+        targetVerified?: boolean;
+        error?: string;
+      };
+
+      if (!response.ok || !result.ok) {
+        setFigmaStatus(result.error ?? "Failed");
+        return;
+      }
+
+      setFigmaStatus(result.targetVerified ? "Bridge target ok" : "Bridge ready");
     } catch {
-      setSyncStatus("Failed");
+      setFigmaStatus("Failed");
     }
   }
 
   async function onUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setTraceStatus("Unsupported");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setTraceStatus("Max 6 MB");
+      event.target.value = "";
+      return;
+    }
     setAssetName(file.name.replace(/\.[^/.]+$/, "") || "custom-drawing");
     setTraceStatus("Detecting");
-    setSyncStatus("Ready");
+    setFigmaStatus("Ready");
 
     try {
       const result = await traceImageFile(file);
@@ -314,7 +335,7 @@ export function BoomerangGenerator() {
           </section>
 
           <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
-            <h2 className="mb-4 text-sm font-semibold">Farby</h2>
+            <h2 className="mb-4 text-sm font-semibold">Vrstvy</h2>
             <div className="grid grid-cols-2 gap-2">
               {COLOR_PRESETS.map((preset) => (
                 <button
@@ -327,9 +348,7 @@ export function BoomerangGenerator() {
                   <span className="flex overflow-hidden rounded-full">
                     {[
                       preset.background,
-                      preset.primary,
-                      preset.secondary,
-                      preset.accent,
+                      ...preset.layers,
                     ].map((color) => (
                       <span
                         key={color}
@@ -346,9 +365,6 @@ export function BoomerangGenerator() {
               {(
                 [
                   ["background", "Pozadie"],
-                  ["primary", "Hlavná"],
-                  ["secondary", "Farba 2"],
-                  ["accent", "Farba 3"],
                 ] as const
               ).map(([key, label]) => (
                 <label key={key} className="text-xs font-medium">
@@ -360,6 +376,59 @@ export function BoomerangGenerator() {
                     className="h-11 w-full cursor-pointer rounded-2xl border border-black/10 bg-white p-1"
                   />
                 </label>
+              ))}
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {settings.layers.map((layer) => (
+                <section
+                  key={layer.id}
+                  className="rounded-2xl border border-black/10 bg-white/70 p-3"
+                >
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold">{layer.label}</h3>
+                    <input
+                      aria-label={`${layer.label} farba`}
+                      type="color"
+                      value={layer.color}
+                      onChange={(event) =>
+                        updateLayer(layer.id, "color", event.target.value)
+                      }
+                      className="h-9 w-14 cursor-pointer rounded-xl border border-black/10 bg-white p-1"
+                    />
+                  </div>
+
+                  {(
+                    [
+                      ["scale", "Veľkosť", 0.35, 1.65, 0.01, ""],
+                      ["chaos", "Chaos", 0, 100, 1, "%"],
+                      ["opacity", "Priehľadnosť", 0, 1, 0.01, ""],
+                    ] as const
+                  ).map(([key, label, min, max, step, suffix]) => (
+                    <label key={key} className="mt-3 block">
+                      <span className="mb-2 flex items-center justify-between text-sm">
+                        <span className="font-medium">{label}</span>
+                        <span className="font-mono text-xs text-[#6b675e]">
+                          {key === "opacity"
+                            ? Math.round(layer[key] * 100)
+                            : layer[key]}
+                          {key === "opacity" ? "%" : suffix}
+                        </span>
+                      </span>
+                      <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        step={step}
+                        value={layer[key]}
+                        onChange={(event) =>
+                          updateLayer(layer.id, key, Number(event.target.value))
+                        }
+                        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#d8ddd6] accent-[#0b8f8f]"
+                      />
+                    </label>
+                  ))}
+                </section>
               ))}
             </div>
           </section>
@@ -397,12 +466,16 @@ export function BoomerangGenerator() {
               className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#0b8f8f] text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
             >
               <PenTool size={16} />
-              {syncStatus === "Syncing" ? "Sync" : "Figma"}
+              {figmaStatus === "Preparing" ? "Sync" : "Figma"}
             </button>
           </section>
 
           <p className="mt-3 rounded-2xl border border-black/10 bg-white/55 px-3 py-2 font-mono text-xs text-[#6b675e]">
-            Figma: {syncStatus}
+            Figma: {figmaStatus}
+          </p>
+
+          <p className="mt-2 rounded-2xl border border-black/10 bg-white/55 px-3 py-2 font-mono text-xs text-[#6b675e]">
+            Galéria: {galleryStatus} / Export: {exportStatus}
           </p>
 
           <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
@@ -499,6 +572,9 @@ export function BoomerangGenerator() {
                   {detectedTrace
                     ? detectedTrace.shapes.map((shape, index) => {
                         const fill = detectedShapeColor(settings, shape, index);
+                        const opacity =
+                          settings.layers[index % settings.layers.length]
+                            ?.opacity ?? 1;
 
                         return (
                           <g key={shape.id}>
@@ -507,7 +583,7 @@ export function BoomerangGenerator() {
                                 d={shape.d}
                                 transform={shape.transform}
                                 fill={fill}
-                                opacity={0.38}
+                                opacity={opacity * 0.38}
                                 filter="url(#line-blur-preview)"
                               />
                             ) : null}
@@ -515,16 +591,16 @@ export function BoomerangGenerator() {
                               d={shape.d}
                               transform={shape.transform}
                               fill={fill}
-                              opacity={1}
+                              opacity={opacity}
                               initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
+                              animate={{ opacity }}
                               transition={{ duration: 0.3, ease: "easeOut" }}
                             />
                             <path
                               d={shape.d}
                               transform={shape.transform}
                               fill={fill}
-                              opacity={overlayOpacity}
+                              opacity={Math.min(0.28, opacity * 0.28)}
                             />
                           </g>
                         );
@@ -536,42 +612,31 @@ export function BoomerangGenerator() {
                               d={element.path}
                               fill="none"
                               stroke={element.stroke}
-                              strokeWidth={element.strokeWidth}
+                              strokeWidth={Number(element.strokeWidth.toFixed(2))}
                               strokeLinecap="round"
                               strokeLinejoin="round"
-                              opacity={0.4}
+                              opacity={element.opacity * 0.4}
                               filter="url(#line-blur-preview)"
                               vectorEffect="non-scaling-stroke"
-                              transform={`translate(${element.x} ${element.y}) rotate(${element.rotation}) scale(${element.scale})`}
+                              transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
                             />
                           ) : null}
                           <motion.path
                             d={element.path}
                             fill="none"
                             stroke={element.stroke}
-                            strokeWidth={element.strokeWidth}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            opacity={1}
-                            vectorEffect="non-scaling-stroke"
-                            transform={`translate(${element.x} ${element.y}) rotate(${element.rotation}) scale(${element.scale})`}
-                            initial={{ pathLength: 0, opacity: 0 }}
-                            animate={{
-                              pathLength: 1,
-                              opacity: 1,
-                            }}
-                            transition={{ duration: 0.45, ease: "easeOut" }}
-                          />
-                          <path
-                            d={element.path}
-                            fill="none"
-                            stroke={element.stroke}
-                            strokeWidth={element.strokeWidth}
+                            strokeWidth={Number(element.strokeWidth.toFixed(2))}
                             strokeLinecap="round"
                             strokeLinejoin="round"
                             opacity={element.opacity}
                             vectorEffect="non-scaling-stroke"
-                            transform={`translate(${element.x} ${element.y}) rotate(${element.rotation}) scale(${element.scale})`}
+                            transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
+                            initial={{ pathLength: 0, opacity: 0 }}
+                            animate={{
+                              pathLength: 1,
+                              opacity: element.opacity,
+                            }}
+                            transition={{ duration: 0.45, ease: "easeOut" }}
                           />
                         </g>
                       ))}
@@ -588,22 +653,6 @@ export function BoomerangGenerator() {
                 <Save size={16} />
                 Uložiť do galérie
               </button>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-4">
-              {referenceImages.map((src) => (
-                <div
-                  key={src}
-                  className="overflow-hidden rounded-3xl border border-white/70 bg-white/55 p-2 shadow-sm backdrop-blur-xl"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={src}
-                    alt=""
-                    className="aspect-square w-full rounded-2xl object-cover"
-                  />
-                </div>
-              ))}
             </div>
 
             <section className="rounded-[28px] border border-white/70 bg-white/45 p-4 shadow-sm backdrop-blur-xl">
