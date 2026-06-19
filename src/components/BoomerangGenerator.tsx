@@ -46,7 +46,7 @@ const numericControls: NumericControl[] = [
   { key: "density", label: "Hustota", min: 12, max: 120, step: 1 },
   { key: "scale", label: "Velkost", min: 0.45, max: 1.75, step: 0.01 },
   { key: "chaos", label: "Chaos", min: 0, max: 100, step: 1, suffix: "%" },
-  { key: "strokeWidth", label: "Hrubka ciar", min: 2, max: 18, step: 0.5 },
+  { key: "strokeWidth", label: "Hrubka ciar", min: 0.5, max: 3, step: 0.1 },
   { key: "blur", label: "Rozmazanie", min: 0, max: 100, step: 1, suffix: "%" },
   {
     key: "opacity",
@@ -93,7 +93,7 @@ export function BoomerangGenerator() {
     [detectedTrace, settings],
   );
   const blurRadius = (settings.blur / 100) * 7.5;
-  const overlayOpacity = 0.16 + (settings.opacity / 100) * 0.34;
+  const overlayOpacity = (settings.opacity / 100) * 0.28;
 
   function updateSetting<Key extends keyof BoomerangSettings>(
     key: Key,
