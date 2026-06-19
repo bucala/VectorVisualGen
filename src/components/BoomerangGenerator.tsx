@@ -24,7 +24,7 @@ import {
 type NumericControl = {
   key: keyof Pick<
     BoomerangSettings,
-    "density" | "scale" | "chaos" | "strokeWidth" | "rotation"
+    "density" | "scale" | "chaos" | "strokeWidth" | "opacity" | "rotation"
   >;
   label: string;
   min: number;
@@ -38,6 +38,14 @@ const numericControls: NumericControl[] = [
   { key: "scale", label: "Velkost", min: 0.45, max: 1.75, step: 0.01 },
   { key: "chaos", label: "Chaos", min: 0, max: 100, step: 1, suffix: "%" },
   { key: "strokeWidth", label: "Hrubka ciar", min: 2, max: 18, step: 0.5 },
+  {
+    key: "opacity",
+    label: "Priehladnost",
+    min: 10,
+    max: 100,
+    step: 1,
+    suffix: "%",
+  },
   { key: "rotation", label: "Rotacia", min: -180, max: 180, step: 1 },
 ];
 
