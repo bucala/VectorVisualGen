@@ -631,12 +631,9 @@ export function BoomerangGenerator() {
                             opacity={element.opacity}
                             vectorEffect="non-scaling-stroke"
                             transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
-                            initial={{ pathLength: 0, opacity: 0 }}
-                            animate={{
-                              pathLength: 1,
-                              opacity: element.opacity,
-                            }}
-                            transition={{ duration: 0.45, ease: "easeOut" }}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: element.opacity }}
+                            transition={{ duration: 0.18, ease: "easeOut" }}
                           />
                         </g>
                       ))}

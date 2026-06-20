@@ -137,6 +137,13 @@ function safeColor(color: string) {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : "#000000";
 }
 
+function layerEdgePadding(layer: BoomerangLayerSettings) {
+  const chaos = clamp(layer.chaos / 100, 0, 1);
+  const maxLocalScale = layer.scale * (0.58 + chaos * 0.38);
+
+  return clamp(118 * maxLocalScale + 18, 70, CANVAS_SIZE * 0.24);
+}
+
 function createClosedBoomerangPath(
   random: () => number,
   chaos: number,
@@ -235,6 +242,7 @@ function poissonDiskSamples(
   random: () => number,
   targetCount: number,
   minDistance: number,
+  edgePadding: number,
 ) {
   const cellSize = minDistance / Math.SQRT2;
   const columns = Math.ceil(CANVAS_SIZE / cellSize);
@@ -249,10 +257,10 @@ function poissonDiskSamples(
 
   function canPlace(candidate: Point) {
     if (
-      candidate.x < 0 ||
-      candidate.y < 0 ||
-      candidate.x >= CANVAS_SIZE ||
-      candidate.y >= CANVAS_SIZE
+      candidate.x < edgePadding ||
+      candidate.y < edgePadding ||
+      candidate.x >= CANVAS_SIZE - edgePadding ||
+      candidate.y >= CANVAS_SIZE - edgePadding
     ) {
       return false;
     }
@@ -285,7 +293,10 @@ function poissonDiskSamples(
     grid[gridIndex(point)] = samples.length - 1;
   }
 
-  addSample({ x: random() * CANVAS_SIZE, y: random() * CANVAS_SIZE });
+  addSample({
+    x: edgePadding + random() * (CANVAS_SIZE - edgePadding * 2),
+    y: edgePadding + random() * (CANVAS_SIZE - edgePadding * 2),
+  });
 
   while (active.length > 0 && samples.length < targetCount) {
     const activeIndex = Math.floor(random() * active.length);
@@ -319,11 +330,13 @@ function jitteredGridFallback(
   random: () => number,
   targetCount: number,
   minDistance: number,
+  edgePadding: number,
 ) {
   const columns = Math.ceil(Math.sqrt(targetCount * 1.18));
   const rows = Math.ceil(targetCount / columns);
-  const cellWidth = CANVAS_SIZE / columns;
-  const cellHeight = CANVAS_SIZE / rows;
+  const usableSize = CANVAS_SIZE - edgePadding * 2;
+  const cellWidth = usableSize / columns;
+  const cellHeight = usableSize / rows;
   const indexes = Array.from({ length: columns * rows }, (_, index) => index);
   const samples: Point[] = [];
   const relaxedDistance = minDistance * 0.72;
@@ -340,14 +353,14 @@ function jitteredGridFallback(
     const row = Math.floor(index / columns);
     const candidate = {
       x: clamp(
-        (col + 0.5) * cellWidth + jitter(random, cellWidth * 0.54),
-        0,
-        CANVAS_SIZE,
+        edgePadding + (col + 0.5) * cellWidth + jitter(random, cellWidth * 0.54),
+        edgePadding,
+        CANVAS_SIZE - edgePadding,
       ),
       y: clamp(
-        (row + 0.5) * cellHeight + jitter(random, cellHeight * 0.54),
-        0,
-        CANVAS_SIZE,
+        edgePadding + (row + 0.5) * cellHeight + jitter(random, cellHeight * 0.54),
+        edgePadding,
+        CANVAS_SIZE - edgePadding,
       ),
     };
     const collides = samples.some(
@@ -371,13 +384,24 @@ function sampleLayerPoints(
     (CANVAS_SIZE * CANVAS_SIZE) / Math.max(1, targetCount * 1.65),
   );
   const minDistance = clamp(densityRadius * (0.88 + layer.scale * 0.16), 44, 118);
-  const poisson = poissonDiskSamples(random, targetCount, minDistance);
+  const edgePadding = layerEdgePadding(layer);
+  const poisson = poissonDiskSamples(
+    random,
+    targetCount,
+    minDistance,
+    edgePadding,
+  );
 
   if (poisson.length >= targetCount * 0.86) {
     return poisson.slice(0, targetCount);
   }
 
-  return jitteredGridFallback(random, targetCount, minDistance).slice(0, targetCount);
+  return jitteredGridFallback(
+    random,
+    targetCount,
+    minDistance,
+    edgePadding,
+  ).slice(0, targetCount);
 }
 
 export function generateBoomerangElements(

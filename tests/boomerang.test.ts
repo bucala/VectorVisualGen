@@ -51,3 +51,23 @@ test("exports generated SVG with three layer groups", () => {
   assert.match(svg, /data-layer="top"/);
   assert.equal((svg.match(/data-layer="/g) ?? []).length, 3);
 });
+
+test("keeps oversized contours closed and away from canvas edges", () => {
+  const settings = {
+    ...DEFAULT_BOOMERANG_SETTINGS,
+    layers: DEFAULT_BOOMERANG_SETTINGS.layers.map((layer) => ({
+      ...layer,
+      scale: 1.65,
+      chaos: 100,
+    })),
+  };
+  const elements = generateBoomerangElements(settings);
+
+  elements.forEach((element) => {
+    assert.match(element.path, /Z$/);
+    assert.ok(element.x > 180, `${element.id} x was too close to the left edge`);
+    assert.ok(element.y > 180, `${element.id} y was too close to the top edge`);
+    assert.ok(element.x < 1020, `${element.id} x was too close to the right edge`);
+    assert.ok(element.y < 1020, `${element.id} y was too close to the bottom edge`);
+  });
+});
