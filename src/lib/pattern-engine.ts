@@ -120,6 +120,13 @@ export type Point = {
   y: number;
 };
 
+export type LayerOverride = {
+  templates?: Point[][];
+  count?: number;
+};
+
+export type LayerOverrides = Partial<Record<LayerId, LayerOverride>>;
+
 type SampleBounds = {
   minX: number;
   maxX: number;
@@ -403,21 +410,24 @@ function sampleLayerPoints(
 
 export function generateBoomerangElements(
   settings: BoomerangSettings,
-  customTemplates?: Point[][],
+  layerOverrides?: LayerOverrides,
 ): BoomerangElement[] {
   const elements: BoomerangElement[] = [];
-  const countPerLayer = Math.round(32 + settings.density * 0.78);
+  const defaultCount = Math.round(32 + settings.density * 0.78);
   const blur = (settings.blur / 100) * 12;
 
   settings.layers
     .slice()
     .sort((a, b) => layerIndexFor(a.id) - layerIndexFor(b.id))
     .forEach((layer, layerPosition) => {
+      const override = layerOverrides?.[layer.id];
       const layerIndex = layerIndexFor(layer.id);
+      const countForLayer = override?.count || defaultCount;
+      const templates = override?.templates?.length ? override.templates : undefined;
       const random = mulberry32(settings.seed + layerIndex * 104729);
       const chaos = clamp(layer.chaos / 100, 0, 1);
       const visualScale = visualScaleFromSlider(layer.scale);
-      const points = sampleLayerPoints(random, countPerLayer, layer);
+      const points = sampleLayerPoints(random, countForLayer, layer);
 
       points.forEach((point, index) => {
         const localScale =
@@ -426,7 +436,7 @@ export function generateBoomerangElements(
 
         elements.push({
           id: `${layer.id}-boomerang-${index}`,
-          path: createClosedBoomerangPath(random, chaos, index + layerIndex * 17, customTemplates),
+          path: createClosedBoomerangPath(random, chaos, index + layerIndex * 17, templates),
           x: point.x,
           y: point.y,
           scale: localScale,
@@ -472,7 +482,7 @@ function extractShapeCentroid(d: string, scaleFactor: number): Point {
 export function generateBoomerangElementsFromTrace(
   settings: BoomerangSettings,
   detectedShapes: DetectedVectorShape[],
-  customTemplates?: Point[][],
+  layerOverrides?: LayerOverrides,
 ): BoomerangElement[] {
   const elements: BoomerangElement[] = [];
   const blur = (settings.blur / 100) * 12;
@@ -481,12 +491,13 @@ export function generateBoomerangElementsFromTrace(
   const topLayerIndex = layerIndexFor("top");
   const topChaos = clamp(topLayer.chaos / 100, 0, 1);
   const topVisualScale = visualScaleFromSlider(topLayer.scale);
+  const topTemplates = layerOverrides?.top?.templates?.length ? layerOverrides.top.templates : undefined;
 
   detectedShapes.forEach((shape, index) => {
     const sf = parseScaleFactor(shape.transform);
     const centroid = extractShapeCentroid(shape.d, sf);
     const r = mulberry32(settings.seed + index * 7919 + 312701);
-    const path = createClosedBoomerangPath(r, topChaos, index, customTemplates);
+    const path = createClosedBoomerangPath(r, topChaos, index, topTemplates);
     const localScale = topVisualScale * (0.72 + r() * (0.16 + topChaos * 0.34));
     const rotation = settings.rotation + r() * 360;
     const strokeWidth = settings.strokeWidth * (0.72 + r() * (0.05 + topChaos * 0.24));
@@ -509,15 +520,18 @@ export function generateBoomerangElementsFromTrace(
     });
   });
 
-  const countPerLayer = Math.round(32 + settings.density * 0.78);
+  const defaultCount = Math.round(32 + settings.density * 0.78);
 
   (["bottom", "middle"] as const).forEach((layerId) => {
+    const override = layerOverrides?.[layerId];
     const layer = layerSettingsFor(settings, layerId);
     const layerIndex = layerIndexFor(layerId);
+    const countForLayer = override?.count || defaultCount;
+    const templates = override?.templates?.length ? override.templates : undefined;
     const random = mulberry32(settings.seed + layerIndex * 104729);
     const chaos = clamp(layer.chaos / 100, 0, 1);
     const visualScale = visualScaleFromSlider(layer.scale);
-    const points = sampleLayerPoints(random, countPerLayer, layer);
+    const points = sampleLayerPoints(random, countForLayer, layer);
 
     points.forEach((point, ptIndex) => {
       const localScale = visualScale * (0.72 + random() * (0.16 + chaos * 0.34));
@@ -525,7 +539,7 @@ export function generateBoomerangElementsFromTrace(
 
       elements.push({
         id: `${layerId}-boomerang-${ptIndex}`,
-        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17, customTemplates),
+        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17, templates),
         x: point.x,
         y: point.y,
         scale: localScale,
@@ -621,14 +635,14 @@ function renderLayerGroups(
 export function createBoomerangSvg(
   settings: BoomerangSettings,
   detectedShapes: DetectedVectorShape[] = [],
-  customTemplates?: Point[][],
+  layerOverrides?: LayerOverrides,
 ) {
   const blur = (settings.blur / 100) * 12;
   const filterDef = blurFilterDef(blur);
   const elements =
     detectedShapes.length > 0
-      ? generateBoomerangElementsFromTrace(settings, detectedShapes, customTemplates)
-      : generateBoomerangElements(settings, customTemplates);
+      ? generateBoomerangElementsFromTrace(settings, detectedShapes, layerOverrides)
+      : generateBoomerangElements(settings, layerOverrides);
   const groups = renderLayerGroups(settings, elements, blur);
 
   return svgDocument(settings, filterDef, groups, true);
@@ -637,14 +651,14 @@ export function createBoomerangSvg(
 export function createSeparatedLayerSvgs(
   settings: BoomerangSettings,
   detectedShapes: DetectedVectorShape[] = [],
-  customTemplates?: Point[][],
+  layerOverrides?: LayerOverrides,
 ): SeparatedLayerSvg[] {
   const blur = (settings.blur / 100) * 12;
   const filterDef = blurFilterDef(blur);
   const elements =
     detectedShapes.length > 0
-      ? generateBoomerangElementsFromTrace(settings, detectedShapes, customTemplates)
-      : generateBoomerangElements(settings, customTemplates);
+      ? generateBoomerangElementsFromTrace(settings, detectedShapes, layerOverrides)
+      : generateBoomerangElements(settings, layerOverrides);
 
   return LAYER_ORDER.map((layerId) => {
     const layer = layerSettingsFor(settings, layerId);
