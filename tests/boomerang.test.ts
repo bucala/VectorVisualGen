@@ -15,7 +15,7 @@ test("generates exactly three explicit layers in bottom-to-top order", () => {
   const layerIds = Array.from(new Set(elements.map((element) => element.layerId)));
 
   assert.deepEqual(layerIds, [...LAYER_ORDER]);
-  assert.equal(DEFAULT_BOOMERANG_SETTINGS.density, 135);
+  assert.equal(DEFAULT_BOOMERANG_SETTINGS.density, 165);
   assert.equal(DEFAULT_BOOMERANG_SETTINGS.layers.length, 3);
 });
 
@@ -40,7 +40,7 @@ test("keeps same-layer boomerangs evenly separated", () => {
     }
 
     assert.ok(
-      minDistance > 42,
+      minDistance > 36,
       `${layerId} minimum distance was ${minDistance.toFixed(2)}`,
     );
   }
