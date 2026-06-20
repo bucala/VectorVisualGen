@@ -115,7 +115,7 @@ export const COLOR_PRESETS = [
   },
 ];
 
-type Point = {
+export type Point = {
   x: number;
   y: number;
 };
@@ -227,9 +227,9 @@ function createClosedBoomerangPath(
   random: () => number,
   chaos: number,
   index: number,
+  customTemplates?: Point[][],
 ) {
-  // 6-point crescent/boomerang outlines — wide arc on top, narrow arc on bottom
-  const templates: Point[][] = [
+  const builtInTemplates: Point[][] = [
     [
       { x: -110, y: 0 },
       { x: -30, y: -52 },
@@ -271,6 +271,7 @@ function createClosedBoomerangPath(
       { x: -44, y: 34 },
     ],
   ];
+  const templates = customTemplates && customTemplates.length > 0 ? customTemplates : builtInTemplates;
   const template = templates[index % templates.length];
   const perturb = 0.04 + chaos * 0.12;
   const stretchX = 0.92 + random() * (0.18 + chaos * 0.18);
@@ -402,6 +403,7 @@ function sampleLayerPoints(
 
 export function generateBoomerangElements(
   settings: BoomerangSettings,
+  customTemplates?: Point[][],
 ): BoomerangElement[] {
   const elements: BoomerangElement[] = [];
   const countPerLayer = Math.round(32 + settings.density * 0.78);
@@ -424,7 +426,7 @@ export function generateBoomerangElements(
 
         elements.push({
           id: `${layer.id}-boomerang-${index}`,
-          path: createClosedBoomerangPath(random, chaos, index + layerIndex * 17),
+          path: createClosedBoomerangPath(random, chaos, index + layerIndex * 17, customTemplates),
           x: point.x,
           y: point.y,
           scale: localScale,
@@ -470,6 +472,7 @@ function extractShapeCentroid(d: string, scaleFactor: number): Point {
 export function generateBoomerangElementsFromTrace(
   settings: BoomerangSettings,
   detectedShapes: DetectedVectorShape[],
+  customTemplates?: Point[][],
 ): BoomerangElement[] {
   const elements: BoomerangElement[] = [];
   const blur = (settings.blur / 100) * 12;
@@ -483,7 +486,7 @@ export function generateBoomerangElementsFromTrace(
     const sf = parseScaleFactor(shape.transform);
     const centroid = extractShapeCentroid(shape.d, sf);
     const r = mulberry32(settings.seed + index * 7919 + 312701);
-    const path = createClosedBoomerangPath(r, topChaos, index);
+    const path = createClosedBoomerangPath(r, topChaos, index, customTemplates);
     const localScale = topVisualScale * (0.72 + r() * (0.16 + topChaos * 0.34));
     const rotation = settings.rotation + r() * 360;
     const strokeWidth = settings.strokeWidth * (0.72 + r() * (0.05 + topChaos * 0.24));
@@ -522,7 +525,7 @@ export function generateBoomerangElementsFromTrace(
 
       elements.push({
         id: `${layerId}-boomerang-${ptIndex}`,
-        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17),
+        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17, customTemplates),
         x: point.x,
         y: point.y,
         scale: localScale,
@@ -618,13 +621,14 @@ function renderLayerGroups(
 export function createBoomerangSvg(
   settings: BoomerangSettings,
   detectedShapes: DetectedVectorShape[] = [],
+  customTemplates?: Point[][],
 ) {
   const blur = (settings.blur / 100) * 12;
   const filterDef = blurFilterDef(blur);
   const elements =
     detectedShapes.length > 0
-      ? generateBoomerangElementsFromTrace(settings, detectedShapes)
-      : generateBoomerangElements(settings);
+      ? generateBoomerangElementsFromTrace(settings, detectedShapes, customTemplates)
+      : generateBoomerangElements(settings, customTemplates);
   const groups = renderLayerGroups(settings, elements, blur);
 
   return svgDocument(settings, filterDef, groups, true);
@@ -633,13 +637,14 @@ export function createBoomerangSvg(
 export function createSeparatedLayerSvgs(
   settings: BoomerangSettings,
   detectedShapes: DetectedVectorShape[] = [],
+  customTemplates?: Point[][],
 ): SeparatedLayerSvg[] {
   const blur = (settings.blur / 100) * 12;
   const filterDef = blurFilterDef(blur);
   const elements =
     detectedShapes.length > 0
-      ? generateBoomerangElementsFromTrace(settings, detectedShapes)
-      : generateBoomerangElements(settings);
+      ? generateBoomerangElementsFromTrace(settings, detectedShapes, customTemplates)
+      : generateBoomerangElements(settings, customTemplates);
 
   return LAYER_ORDER.map((layerId) => {
     const layer = layerSettingsFor(settings, layerId);
