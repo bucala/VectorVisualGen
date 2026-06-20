@@ -60,7 +60,7 @@ export const DEFAULT_LAYERS: BoomerangLayerSettings[] = [
     id: "bottom",
     label: "Spodná vrstva",
     color: "#00a8c8",
-    scale: 0.74,
+    scale: 1.80,
     chaos: 42,
     opacity: 0.70,
   },
@@ -68,7 +68,7 @@ export const DEFAULT_LAYERS: BoomerangLayerSettings[] = [
     id: "middle",
     label: "Stredná vrstva",
     color: "#cc3030",
-    scale: 0.82,
+    scale: 2.10,
     chaos: 52,
     opacity: 0.82,
   },
@@ -76,15 +76,15 @@ export const DEFAULT_LAYERS: BoomerangLayerSettings[] = [
     id: "top",
     label: "Vrchná vrstva",
     color: "#e8dfc4",
-    scale: 0.90,
+    scale: 2.40,
     chaos: 34,
     opacity: 0.32,
   },
 ];
 
 export const DEFAULT_BOOMERANG_SETTINGS: BoomerangSettings = {
-  density: 135,
-  strokeWidth: 1.2,
+  density: 165,
+  strokeWidth: 1.4,
   blur: 0,
   rotation: -18,
   background: "#080810",
@@ -228,91 +228,71 @@ function createClosedBoomerangPath(
   chaos: number,
   index: number,
 ) {
+  // 6-point crescent/boomerang outlines — wide arc on top, narrow arc on bottom
   const templates: Point[][] = [
     [
-      { x: -112, y: -10 },
-      { x: -82, y: -44 },
-      { x: -24, y: -34 },
-      { x: 18, y: -58 },
-      { x: 92, y: -32 },
-      { x: 108, y: 8 },
-      { x: 54, y: 34 },
-      { x: 8, y: 4 },
-      { x: -36, y: 44 },
-      { x: -98, y: 28 },
+      { x: -110, y: 0 },
+      { x: -30, y: -52 },
+      { x: 60, y: -44 },
+      { x: 110, y: 0 },
+      { x: 50, y: 36 },
+      { x: -40, y: 32 },
     ],
     [
-      { x: -104, y: 24 },
-      { x: -72, y: -28 },
-      { x: -8, y: -52 },
-      { x: 42, y: -24 },
-      { x: 96, y: -42 },
-      { x: 116, y: 8 },
-      { x: 62, y: 42 },
-      { x: 6, y: 18 },
-      { x: -30, y: 52 },
-      { x: -88, y: 46 },
+      { x: -108, y: 8 },
+      { x: -24, y: -56 },
+      { x: 56, y: -48 },
+      { x: 112, y: -4 },
+      { x: 44, y: 40 },
+      { x: -46, y: 36 },
     ],
     [
-      { x: -112, y: -2 },
-      { x: -62, y: -54 },
-      { x: 2, y: -24 },
-      { x: 58, y: -58 },
-      { x: 108, y: -12 },
-      { x: 92, y: 34 },
-      { x: 30, y: 26 },
-      { x: -4, y: 58 },
-      { x: -58, y: 36 },
-      { x: -86, y: 4 },
+      { x: -112, y: -6 },
+      { x: -20, y: -60 },
+      { x: 64, y: -40 },
+      { x: 108, y: 6 },
+      { x: 36, y: 42 },
+      { x: -52, y: 28 },
     ],
     [
-      { x: -96, y: -32 },
-      { x: -42, y: -58 },
-      { x: 2, y: -18 },
-      { x: 52, y: -48 },
-      { x: 112, y: -8 },
-      { x: 98, y: 36 },
-      { x: 38, y: 48 },
-      { x: -8, y: 10 },
-      { x: -48, y: 48 },
-      { x: -106, y: 18 },
+      { x: -106, y: 12 },
+      { x: -36, y: -50 },
+      { x: 52, y: -52 },
+      { x: 114, y: 2 },
+      { x: 46, y: 44 },
+      { x: -34, y: 38 },
     ],
     [
-      { x: -116, y: 14 },
-      { x: -78, y: -38 },
-      { x: -18, y: -18 },
-      { x: 20, y: -54 },
-      { x: 82, y: -40 },
-      { x: 112, y: 0 },
-      { x: 76, y: 40 },
-      { x: 18, y: 24 },
-      { x: -24, y: 54 },
-      { x: -86, y: 36 },
+      { x: -114, y: -2 },
+      { x: -28, y: -54 },
+      { x: 58, y: -46 },
+      { x: 106, y: 8 },
+      { x: 40, y: 38 },
+      { x: -44, y: 34 },
     ],
   ];
   const template = templates[index % templates.length];
-  const perturb = 0.05 + chaos * 0.18;
-  const stretchX = 0.9 + random() * (0.24 + chaos * 0.24);
-  const stretchY = 0.58 + random() * (0.22 + chaos * 0.18);
+  const perturb = 0.04 + chaos * 0.12;
+  const stretchX = 0.92 + random() * (0.18 + chaos * 0.18);
+  const stretchY = 0.78 + random() * (0.18 + chaos * 0.14);
   const points = template.map((point, pointIndex) => {
     const anchorWeight = pointIndex === 0 ? 0.55 : 1;
-    const wave = Math.sin((pointIndex / template.length) * Math.PI * 2);
 
     return {
       x:
-        point.x * stretchX * (0.98 + random() * (0.04 + chaos * 0.09)) +
-        jitter(random, 24 * perturb) * anchorWeight,
+        point.x * stretchX * (0.98 + random() * (0.04 + chaos * 0.07)) +
+        jitter(random, 18 * perturb) * anchorWeight,
       y:
-        (point.y + wave * (10 + chaos * 16)) *
+        point.y *
           stretchY *
-          (0.98 + random() * (0.05 + chaos * 0.1)) +
-        jitter(random, 24 * perturb) * anchorWeight,
+          (0.98 + random() * (0.04 + chaos * 0.08)) +
+        jitter(random, 18 * perturb) * anchorWeight,
     };
   });
   const controls = points.map((point, pointIndex) => {
     const previous = points[(pointIndex - 1 + points.length) % points.length];
     const next = points[(pointIndex + 1) % points.length];
-    const tension = 0.27 + random() * (0.07 + chaos * 0.07);
+    const tension = 0.20 + random() * (0.06 + chaos * 0.06);
 
     return {
       in: {

@@ -177,10 +177,47 @@ export function BoomerangGenerator() {
     }));
   }
 
-  function reseed() {
+  function hslToHex(h: number, s: number, l: number) {
+    const sl = s / 100;
+    const ll = l / 100;
+    const a = sl * Math.min(ll, 1 - ll);
+    const f = (n: number) => {
+      const k = (n + h / 30) % 12;
+      const color = ll - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+      return Math.round(255 * color).toString(16).padStart(2, "0");
+    };
+    return `#${f(0)}${f(8)}${f(4)}`;
+  }
+
+  function randomizeDesign() {
+    const baseHue = Math.random() * 360;
+    const bgL = 4 + Math.random() * 8;
+    const background = hslToHex(baseHue, 20 + Math.random() * 30, bgL);
+    const hues = [
+      baseHue,
+      (baseHue + 150 + Math.random() * 60) % 360,
+      (baseHue + 30 + Math.random() * 40) % 360,
+    ];
+
     setSettings((current) => ({
       ...current,
       seed: Math.floor(Math.random() * 100000),
+      density: Math.round(80 + Math.random() * 160),
+      strokeWidth: parseFloat((0.6 + Math.random() * 2.0).toFixed(1)),
+      blur: Math.random() < 0.3 ? Math.round(Math.random() * 60) : 0,
+      rotation: Math.round(-60 + Math.random() * 120),
+      background,
+      layers: current.layers.map((layer, index) => ({
+        ...layer,
+        color: hslToHex(
+          hues[index],
+          55 + Math.random() * 35,
+          45 + Math.random() * 30,
+        ),
+        scale: parseFloat((0.8 + Math.random() * 2.0).toFixed(2)),
+        chaos: Math.round(Math.random() * 80),
+        opacity: parseFloat((0.3 + Math.random() * 0.65).toFixed(2)),
+      })),
     }));
     setFigmaStatus("Ready");
     setExportStatus("Ready");
@@ -410,14 +447,6 @@ export function BoomerangGenerator() {
               ))}
             </div>
 
-            <button
-              type="button"
-              onClick={reseed}
-              className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#191716] px-4 text-sm font-semibold text-white shadow-lg shadow-black/15 transition hover:-translate-y-0.5 hover:bg-[#2b2722]"
-            >
-              <Shuffle size={16} />
-              Novy seed
-            </button>
           </section>
 
           <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
@@ -704,6 +733,14 @@ export function BoomerangGenerator() {
             </motion.div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={randomizeDesign}
+                className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white px-5 text-sm font-semibold shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+              >
+                <Shuffle size={16} />
+                Náhodný design
+              </button>
               <button
                 type="button"
                 onClick={saveToGallery}
