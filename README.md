@@ -61,11 +61,11 @@ FIGMA_FILE_KEY=
 FIGMA_NODE_ID=
 ```
 
-The current endpoint validates and packages the generated SVG. Direct canvas insertion requires a Figma plugin bridge or OAuth-based workflow, because Figma REST does not provide arbitrary write access for creating vector layers in a user file.
+The current endpoint validates and packages the generated SVG together with up to five saved gallery SVGs. Direct canvas insertion still requires a Figma plugin bridge or OAuth-based workflow, because Figma REST does not provide arbitrary write access for creating vector layers in a user file.
 
 ## Roadmap
 
 - Browser-side bitmap tracing pipeline: threshold, contour extraction, simplification, SVG path conversion
-- Pattern gallery with persisted generations, tags, color filters, and infinite scrolling
-- Figma plugin bridge for one-click insertion and live updates
+- Pattern gallery tags, color filters, and infinite scrolling
+- Figma plugin bridge for one-click insertion and live updates from gallery payloads
 - Export presets for tile repeats, print sizes, and transparent backgrounds

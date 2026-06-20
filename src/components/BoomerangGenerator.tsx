@@ -13,7 +13,7 @@ import {
   Shuffle,
   Trash2,
 } from "lucide-react";
-import { ChangeEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CANVAS_SIZE,
@@ -43,6 +43,7 @@ type SavedGalleryItem = {
   id: string;
   name: string;
   dataUrl: string;
+  svg: string;
   createdAt: string;
 };
 
@@ -54,7 +55,9 @@ const numericControls: NumericControl[] = [
 ];
 
 const MAX_GALLERY_ITEMS = 12;
+const MAX_FIGMA_GALLERY_ITEMS = 5;
 const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
+const GALLERY_STORAGE_KEY = "vectorvisualgen.gallery.v1";
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
@@ -89,12 +92,55 @@ export function BoomerangGenerator() {
   const [galleryStatus, setGalleryStatus] = useState("Ready");
   const [exportStatus, setExportStatus] = useState("Ready");
   const [savedGallery, setSavedGallery] = useState<SavedGalleryItem[]>([]);
+  const [galleryHydrated, setGalleryHydrated] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const elements = useMemo(
     () => (detectedTrace ? [] : generateBoomerangElements(settings)),
     [detectedTrace, settings],
   );
   const blurRadius = (settings.blur / 100) * 12;
+
+  useEffect(() => {
+    window.queueMicrotask(() => {
+      try {
+        const stored = window.localStorage.getItem(GALLERY_STORAGE_KEY);
+        if (!stored) {
+          setGalleryHydrated(true);
+          return;
+        }
+
+        const parsed = JSON.parse(stored) as SavedGalleryItem[];
+        const validItems = Array.isArray(parsed)
+          ? parsed.filter(
+              (item) =>
+                typeof item.id === "string" &&
+                typeof item.name === "string" &&
+                typeof item.dataUrl === "string" &&
+                typeof item.svg === "string" &&
+                typeof item.createdAt === "string",
+            )
+          : [];
+
+        setSavedGallery(validItems.slice(0, MAX_GALLERY_ITEMS));
+        if (validItems.length > 0) setGalleryStatus(`${validItems.length} loaded`);
+      } catch {
+        setGalleryStatus("Gallery restore failed");
+      } finally {
+        setGalleryHydrated(true);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!galleryHydrated) return;
+
+    try {
+      window.localStorage.setItem(
+        GALLERY_STORAGE_KEY,
+        JSON.stringify(savedGallery),
+      );
+    } catch {}
+  }, [galleryHydrated, savedGallery]);
 
   function updateSetting<Key extends keyof BoomerangSettings>(
     key: Key,
@@ -192,6 +238,7 @@ export function BoomerangGenerator() {
 
   async function saveToGallery() {
     try {
+      const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
       const canvas = await renderCurrentPatternCanvas();
       const dataUrl = canvas.toDataURL("image/png");
       const createdAt = new Date().toISOString();
@@ -201,6 +248,7 @@ export function BoomerangGenerator() {
           id: `gallery-${createdAt}`,
           name: `${assetName || "boomerang"}-${current.length + 1}`,
           dataUrl,
+          svg,
           createdAt,
         },
         ...current,
@@ -220,12 +268,19 @@ export function BoomerangGenerator() {
         body: JSON.stringify({
           name: assetName,
           svg: createBoomerangSvg(settings, detectedTrace?.shapes),
+          gallery: savedGallery.slice(0, MAX_FIGMA_GALLERY_ITEMS).map((item) => ({
+            id: item.id,
+            name: item.name,
+            createdAt: item.createdAt,
+            svg: item.svg,
+          })),
         }),
       });
       const result = (await response.json()) as {
         ok?: boolean;
         mode?: string;
         targetVerified?: boolean;
+        galleryCount?: number;
         error?: string;
       };
 
@@ -234,7 +289,13 @@ export function BoomerangGenerator() {
         return;
       }
 
-      setFigmaStatus(result.targetVerified ? "Bridge target ok" : "Bridge ready");
+      const galleryLabel =
+        result.galleryCount !== undefined
+          ? ` / ${result.galleryCount} gallery`
+          : "";
+      setFigmaStatus(
+        `${result.targetVerified ? "Bridge target ok" : "Bridge ready"}${galleryLabel}`,
+      );
     } catch {
       setFigmaStatus("Failed");
     }
@@ -675,7 +736,10 @@ export function BoomerangGenerator() {
                 {savedGallery.length > 0 ? (
                   <button
                     type="button"
-                    onClick={() => setSavedGallery([])}
+                    onClick={() => {
+                      setSavedGallery([]);
+                      setGalleryStatus("Cleared");
+                    }}
                     className="flex h-9 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white px-3 text-xs font-semibold shadow-sm transition hover:-translate-y-0.5"
                   >
                     <Trash2 size={14} />

@@ -86,6 +86,7 @@ export async function POST(request: Request) {
       ok: true,
       mode: "bridge-ready",
       targetVerified: false,
+      galleryCount: parsed.body.gallery?.length ?? 0,
       payload: bridgePayload,
     });
   }
@@ -116,6 +117,7 @@ export async function POST(request: Request) {
     ok: true,
     mode: "bridge-ready",
     targetVerified: true,
+    galleryCount: parsed.body.gallery?.length ?? 0,
     payload: bridgePayload,
   });
 }

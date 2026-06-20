@@ -1,8 +1,17 @@
 export const MAX_FIGMA_JSON_BYTES = 1_500_000;
 export const MAX_FIGMA_SVG_BYTES = 1_250_000;
+export const MAX_FIGMA_GALLERY_ITEMS = 5;
 
 export type FigmaSyncBody = {
   name?: string;
+  svg: string;
+  gallery?: FigmaGalleryItem[];
+};
+
+export type FigmaGalleryItem = {
+  id?: string;
+  name?: string;
+  createdAt?: string;
   svg: string;
 };
 
@@ -36,6 +45,7 @@ export function parseFigmaSyncBody(raw: string): ParsedFigmaSyncBody {
 
   const name = parsed.name;
   const svg = parsed.svg;
+  const gallery = parsed.gallery;
 
   if (name !== undefined && typeof name !== "string") {
     return { ok: false, error: "Name must be a string.", status: 400 };
@@ -62,11 +72,85 @@ export function parseFigmaSyncBody(raw: string): ParsedFigmaSyncBody {
     };
   }
 
+  let normalizedGallery: FigmaGalleryItem[] | undefined;
+  if (gallery !== undefined) {
+    if (!Array.isArray(gallery)) {
+      return { ok: false, error: "Gallery must be an array.", status: 400 };
+    }
+
+    if (gallery.length > MAX_FIGMA_GALLERY_ITEMS) {
+      return {
+        ok: false,
+        error: `Gallery can sync at most ${MAX_FIGMA_GALLERY_ITEMS} items.`,
+        status: 400,
+      };
+    }
+
+    normalizedGallery = [];
+    for (const [index, item] of gallery.entries()) {
+      if (!isPlainObject(item)) {
+        return {
+          ok: false,
+          error: `Gallery item ${index + 1} must be an object.`,
+          status: 400,
+        };
+      }
+
+      const itemSvg = item.svg;
+      if (typeof itemSvg !== "string" || itemSvg.trim().length === 0) {
+        return {
+          ok: false,
+          error: `Gallery item ${index + 1} is missing SVG payload.`,
+          status: 400,
+        };
+      }
+
+      if (byteLength(itemSvg) > MAX_FIGMA_SVG_BYTES) {
+        return {
+          ok: false,
+          error: `Gallery item ${index + 1} SVG payload is too large.`,
+          status: 413,
+        };
+      }
+
+      const normalizedItemSvg = itemSvg.trim().toLowerCase();
+      if (
+        !normalizedItemSvg.startsWith("<svg") ||
+        !normalizedItemSvg.includes("</svg>")
+      ) {
+        return {
+          ok: false,
+          error: `Gallery item ${index + 1} must be a complete SVG.`,
+          status: 400,
+        };
+      }
+
+      if (/<\s*(script|foreignobject)\b/i.test(itemSvg)) {
+        return {
+          ok: false,
+          error: `Gallery item ${index + 1} contains unsupported active content.`,
+          status: 400,
+        };
+      }
+
+      normalizedGallery.push({
+        id: typeof item.id === "string" ? item.id : undefined,
+        name:
+          typeof item.name === "string" && item.name.trim().length > 0
+            ? item.name.trim()
+            : `gallery-${index + 1}`,
+        createdAt: typeof item.createdAt === "string" ? item.createdAt : undefined,
+        svg: itemSvg,
+      });
+    }
+  }
+
   return {
     ok: true,
     body: {
       name: name?.trim() || "vectorvisualgen-pattern",
       svg,
+      gallery: normalizedGallery,
     },
   };
 }
@@ -81,6 +165,17 @@ export function createFigmaBridgePayload(
     name: body.name ?? "vectorvisualgen-pattern",
     bytes: byteLength(body.svg),
     svg: body.svg,
+    gallery: {
+      count: body.gallery?.length ?? 0,
+      items:
+        body.gallery?.map((item) => ({
+          id: item.id ?? null,
+          name: item.name ?? "gallery-item",
+          createdAt: item.createdAt ?? null,
+          bytes: byteLength(item.svg),
+          svg: item.svg,
+        })) ?? [],
+    },
     target: {
       fileKey: target.fileKey ?? null,
       nodeId: target.nodeId ?? null,
