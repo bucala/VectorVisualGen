@@ -14,6 +14,7 @@ test("generates exactly three explicit layers in bottom-to-top order", () => {
   const layerIds = Array.from(new Set(elements.map((element) => element.layerId)));
 
   assert.deepEqual(layerIds, [...LAYER_ORDER]);
+  assert.equal(DEFAULT_BOOMERANG_SETTINGS.density, 130);
   assert.equal(DEFAULT_BOOMERANG_SETTINGS.layers.length, 3);
 });
 
@@ -70,6 +71,25 @@ test("exports each layer as a separate transparent SVG", () => {
     assert.doesNotMatch(layer.svg, /<rect width="1200"/);
     assert.match(layer.svg, /xmlns:inkscape=/);
   }
+});
+
+test("keeps high size settings in a reference-like contour scale", () => {
+  const settings = {
+    ...DEFAULT_BOOMERANG_SETTINGS,
+    density: 130,
+    layers: DEFAULT_BOOMERANG_SETTINGS.layers.map((layer) => ({
+      ...layer,
+      scale: 3,
+    })),
+  };
+  const elements = generateBoomerangElements(settings);
+  const scales = elements.map((element) => element.scale);
+
+  assert.ok(Math.max(...scales) < 0.78);
+  assert.ok(Math.min(...scales) > 0.02);
+  elements.forEach((element) => {
+    assert.match(element.path, /Z$/);
+  });
 });
 
 test("overscans oversized contours past the canvas edges", () => {

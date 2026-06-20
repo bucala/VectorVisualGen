@@ -83,8 +83,8 @@ export const DEFAULT_LAYERS: BoomerangLayerSettings[] = [
 ];
 
 export const DEFAULT_BOOMERANG_SETTINGS: BoomerangSettings = {
-  density: 180,
-  strokeWidth: 1.45,
+  density: 130,
+  strokeWidth: 1.1,
   blur: 0,
   rotation: -18,
   background: "#19120f",
@@ -152,6 +152,11 @@ function safeColor(color: string) {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : "#000000";
 }
 
+function visualScaleFromSlider(scale: number) {
+  const normalized = clamp(scale, 0, 3) / 3;
+  return normalized <= 0 ? 0.04 : 0.1 + Math.pow(normalized, 0.86) * 0.58;
+}
+
 function escapeAttribute(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -206,7 +211,8 @@ function svgDocument(
 
 function sampleBounds(layer: BoomerangLayerSettings): SampleBounds {
   const chaos = clamp(layer.chaos / 100, 0, 1);
-  const shapeReach = 128 * layer.scale * (0.58 + chaos * 0.38);
+  const visualScale = visualScaleFromSlider(layer.scale);
+  const shapeReach = 178 * visualScale * (0.74 + chaos * 0.2);
   const overscan = clamp(CANVAS_SIZE * OVERSCAN_RATIO + shapeReach, 180, 340);
 
   return {
@@ -224,60 +230,89 @@ function createClosedBoomerangPath(
 ) {
   const templates: Point[][] = [
     [
-      { x: -82, y: 18 },
-      { x: -62, y: -58 },
-      { x: 12, y: -82 },
-      { x: 78, y: -36 },
-      { x: 42, y: -10 },
-      { x: -16, y: -26 },
-      { x: -58, y: 30 },
+      { x: -112, y: -10 },
+      { x: -82, y: -44 },
+      { x: -24, y: -34 },
+      { x: 18, y: -58 },
+      { x: 92, y: -32 },
+      { x: 108, y: 8 },
+      { x: 54, y: 34 },
+      { x: 8, y: 4 },
+      { x: -36, y: 44 },
+      { x: -98, y: 28 },
     ],
     [
-      { x: -78, y: -34 },
-      { x: -40, y: -76 },
-      { x: 34, y: -60 },
-      { x: 82, y: 10 },
-      { x: 28, y: 28 },
-      { x: -28, y: 0 },
-      { x: -68, y: 34 },
+      { x: -104, y: 24 },
+      { x: -72, y: -28 },
+      { x: -8, y: -52 },
+      { x: 42, y: -24 },
+      { x: 96, y: -42 },
+      { x: 116, y: 8 },
+      { x: 62, y: 42 },
+      { x: 6, y: 18 },
+      { x: -30, y: 52 },
+      { x: -88, y: 46 },
     ],
     [
-      { x: -82, y: 4 },
-      { x: -34, y: -88 },
-      { x: 56, y: -58 },
-      { x: 78, y: 42 },
-      { x: 22, y: 18 },
-      { x: -22, y: 4 },
-      { x: -58, y: 34 },
+      { x: -112, y: -2 },
+      { x: -62, y: -54 },
+      { x: 2, y: -24 },
+      { x: 58, y: -58 },
+      { x: 108, y: -12 },
+      { x: 92, y: 34 },
+      { x: 30, y: 26 },
+      { x: -4, y: 58 },
+      { x: -58, y: 36 },
+      { x: -86, y: 4 },
     ],
     [
-      { x: -72, y: 26 },
-      { x: -54, y: -54 },
-      { x: 32, y: -78 },
-      { x: 80, y: -4 },
-      { x: 36, y: 34 },
-      { x: -18, y: -10 },
-      { x: -58, y: 34 },
+      { x: -96, y: -32 },
+      { x: -42, y: -58 },
+      { x: 2, y: -18 },
+      { x: 52, y: -48 },
+      { x: 112, y: -8 },
+      { x: 98, y: 36 },
+      { x: 38, y: 48 },
+      { x: -8, y: 10 },
+      { x: -48, y: 48 },
+      { x: -106, y: 18 },
+    ],
+    [
+      { x: -116, y: 14 },
+      { x: -78, y: -38 },
+      { x: -18, y: -18 },
+      { x: 20, y: -54 },
+      { x: 82, y: -40 },
+      { x: 112, y: 0 },
+      { x: 76, y: 40 },
+      { x: 18, y: 24 },
+      { x: -24, y: 54 },
+      { x: -86, y: 36 },
     ],
   ];
-  const perturb = 0.08 + chaos * 0.24;
   const template = templates[index % templates.length];
+  const perturb = 0.05 + chaos * 0.18;
+  const stretchX = 0.9 + random() * (0.24 + chaos * 0.24);
+  const stretchY = 0.58 + random() * (0.22 + chaos * 0.18);
   const points = template.map((point, pointIndex) => {
     const anchorWeight = pointIndex === 0 ? 0.55 : 1;
+    const wave = Math.sin((pointIndex / template.length) * Math.PI * 2);
 
     return {
       x:
-        point.x * (0.95 + random() * (0.08 + chaos * 0.18)) +
-        jitter(random, 30 * perturb) * anchorWeight,
+        point.x * stretchX * (0.98 + random() * (0.04 + chaos * 0.09)) +
+        jitter(random, 24 * perturb) * anchorWeight,
       y:
-        point.y * (0.94 + random() * (0.09 + chaos * 0.18)) +
-        jitter(random, 30 * perturb) * anchorWeight,
+        (point.y + wave * (10 + chaos * 16)) *
+          stretchY *
+          (0.98 + random() * (0.05 + chaos * 0.1)) +
+        jitter(random, 24 * perturb) * anchorWeight,
     };
   });
   const controls = points.map((point, pointIndex) => {
     const previous = points[(pointIndex - 1 + points.length) % points.length];
     const next = points[(pointIndex + 1) % points.length];
-    const tension = 0.18 + random() * (0.06 + chaos * 0.1);
+    const tension = 0.27 + random() * (0.07 + chaos * 0.07);
 
     return {
       in: {
@@ -369,7 +404,8 @@ function sampleLayerPoints(
   const densityRadius = Math.sqrt(
     (CANVAS_SIZE * CANVAS_SIZE) / Math.max(1, targetCount * 1.65),
   );
-  const minDistance = clamp(densityRadius * (0.62 + layer.scale * 0.08), 28, 92);
+  const visualScale = visualScaleFromSlider(layer.scale);
+  const minDistance = clamp(densityRadius * (0.54 + visualScale * 0.14), 24, 86);
   const bounds = sampleBounds(layer);
   const sampleArea =
     ((bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY)) /
@@ -398,12 +434,13 @@ export function generateBoomerangElements(
       const layerIndex = layerIndexFor(layer.id);
       const random = mulberry32(settings.seed + layerIndex * 104729);
       const chaos = clamp(layer.chaos / 100, 0, 1);
+      const visualScale = visualScaleFromSlider(layer.scale);
       const points = sampleLayerPoints(random, countPerLayer, layer);
 
       points.forEach((point, index) => {
         const localScale =
-          layer.scale * (0.36 + random() * (0.12 + chaos * 0.28));
-        const rotationJitter = jitter(random, 70 + chaos * 250);
+          visualScale * (0.72 + random() * (0.16 + chaos * 0.34));
+        const rotationJitter = jitter(random, 95 + chaos * 240);
 
         elements.push({
           id: `${layer.id}-boomerang-${index}`,
@@ -413,7 +450,7 @@ export function generateBoomerangElements(
           scale: localScale,
           rotation: settings.rotation + random() * 360 + rotationJitter,
           stroke: safeColor(layer.color),
-          strokeWidth: settings.strokeWidth * (0.82 + random() * (0.05 + chaos * 0.3)),
+          strokeWidth: settings.strokeWidth * (0.72 + random() * (0.05 + chaos * 0.24)),
           opacity: clamp(layer.opacity, 0, 1),
           blur,
           layerId: layer.id,

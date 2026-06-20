@@ -481,7 +481,7 @@ export function BoomerangGenerator() {
 
                   {(
                     [
-                      ["scale", "Veľkosť", 0.35, 1.65, 0.01, ""],
+                      ["scale", "Veľkosť", 0, 3, 0.01, ""],
                       ["chaos", "Chaos", 0, 100, 1, "%"],
                       ["opacity", "Priehľadnosť", 0, 1, 0.01, ""],
                     ] as const
