@@ -26,6 +26,7 @@ import {
   createSeparatedLayerSvgs,
   generateBoomerangElements,
 } from "@/lib/boomerang";
+import { MAX_FIGMA_GALLERY_ITEMS } from "@/lib/figma-sync";
 import { ImageTraceResult, traceImageFile } from "@/lib/image-tracing";
 
 type NumericControl = {
@@ -56,7 +57,6 @@ const numericControls: NumericControl[] = [
 ];
 
 const MAX_GALLERY_ITEMS = 12;
-const MAX_FIGMA_GALLERY_ITEMS = 5;
 const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
 const GALLERY_STORAGE_KEY = "vectorvisualgen.gallery.v1";
 
@@ -194,25 +194,33 @@ export function BoomerangGenerator() {
   }
 
   function exportSvg() {
-    const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
-    downloadBlob(
-      new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
-      `${assetName || "vectorvisualgen-boomerang"}.svg`,
-    );
-    setExportStatus("SVG ready");
+    try {
+      const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
+      downloadBlob(
+        new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+        `${assetName || "vectorvisualgen-boomerang"}.svg`,
+      );
+      setExportStatus("SVG ready");
+    } catch {
+      setExportStatus("SVG failed");
+    }
   }
 
   function exportLayerSvgs() {
-    const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes);
-    const baseName = assetName || "vectorvisualgen-boomerang";
+    try {
+      const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes);
+      const baseName = assetName || "vectorvisualgen-boomerang";
 
-    layers.forEach((layer) => {
-      downloadBlob(
-        new Blob([layer.svg], { type: "image/svg+xml;charset=utf-8" }),
-        `${baseName}-${layer.fileSuffix}.svg`,
-      );
-    });
-    setExportStatus("3 layer SVGs ready");
+      layers.forEach((layer) => {
+        downloadBlob(
+          new Blob([layer.svg], { type: "image/svg+xml;charset=utf-8" }),
+          `${baseName}-${layer.fileSuffix}.svg`,
+        );
+      });
+      setExportStatus(`${layers.length} layer SVGs ready`);
+    } catch {
+      setExportStatus("Export failed");
+    }
   }
 
   async function renderCurrentPatternCanvas(scale = 1) {
@@ -259,7 +267,7 @@ export function BoomerangGenerator() {
 
       setSavedGallery((current) => [
         {
-          id: `gallery-${createdAt}`,
+          id: crypto.randomUUID(),
           name: `${assetName || "boomerang"}-${current.length + 1}`,
           dataUrl,
           svg,
@@ -393,12 +401,6 @@ export function BoomerangGenerator() {
                     onChange={(event) =>
                       updateSetting(control.key, Number(event.target.value))
                     }
-                    onInput={(event) =>
-                      updateSetting(
-                        control.key,
-                        Number(event.currentTarget.value),
-                      )
-                    }
                     className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#d8ddd6] accent-[#0b8f8f]"
                   />
                 </label>
@@ -504,13 +506,6 @@ export function BoomerangGenerator() {
                         value={layer[key]}
                         onChange={(event) =>
                           updateLayer(layer.id, key, Number(event.target.value))
-                        }
-                        onInput={(event) =>
-                          updateLayer(
-                            layer.id,
-                            key,
-                            Number(event.currentTarget.value),
-                          )
                         }
                         className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#d8ddd6] accent-[#0b8f8f]"
                       />

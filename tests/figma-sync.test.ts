@@ -69,6 +69,15 @@ test("accepts gallery SVG payloads for the Figma bridge", () => {
   }
 });
 
+test("rejects name longer than 200 characters", () => {
+  const parsed = parseFigmaSyncBody(
+    JSON.stringify({ name: "a".repeat(201), svg: "<svg><path /></svg>" }),
+  );
+
+  assert.equal(parsed.ok, false);
+  if (!parsed.ok) assert.equal(parsed.status, 400);
+});
+
 test("rejects oversized Figma gallery batches", () => {
   const parsed = parseFigmaSyncBody(
     JSON.stringify({
