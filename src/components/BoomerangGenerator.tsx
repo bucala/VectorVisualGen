@@ -19,8 +19,10 @@ import {
   CANVAS_SIZE,
   COLOR_PRESETS,
   DEFAULT_BOOMERANG_SETTINGS,
+  LAYER_ORDER,
   LayerId,
   BoomerangSettings,
+  LayerOverrides,
   Point,
   createBoomerangSvg,
   createSeparatedLayerSvgs,
@@ -96,16 +98,30 @@ export function BoomerangGenerator() {
   const [exportStatus, setExportStatus] = useState("Ready");
   const [savedGallery, setSavedGallery] = useState<SavedGalleryItem[]>([]);
   const [galleryHydrated, setGalleryHydrated] = useState(false);
-  const [customTemplates, setCustomTemplates] = useState<Point[][]>([]);
+  const [layerCustomData, setLayerCustomData] = useState<
+    Record<LayerId, { shapes: Point[][]; count: number }>
+  >({ bottom: { shapes: [], count: 0 }, middle: { shapes: [], count: 0 }, top: { shapes: [], count: 0 } });
+  const [activeSketchLayer, setActiveSketchLayer] = useState<LayerId>("bottom");
   const svgRef = useRef<SVGSVGElement>(null);
-  const activeTemplates = customTemplates.length > 0 ? customTemplates : undefined;
+  const layerOverrides = useMemo<LayerOverrides>(() => {
+    const out: LayerOverrides = {};
+    for (const id of LAYER_ORDER) {
+      const d = layerCustomData[id];
+      if (d.shapes.length > 0 || d.count > 0) {
+        out[id] = {
+          templates: d.shapes.length > 0 ? d.shapes : undefined,
+          count: d.count > 0 ? d.count : undefined,
+        };
+      }
+    }
+    return out;
+  }, [layerCustomData]);
   const elements = useMemo(
     () =>
       detectedTrace
-        ? generateBoomerangElementsFromTrace(settings, detectedTrace.shapes, activeTemplates)
-        : generateBoomerangElements(settings, activeTemplates),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [detectedTrace, settings, customTemplates],
+        ? generateBoomerangElementsFromTrace(settings, detectedTrace.shapes, layerOverrides)
+        : generateBoomerangElements(settings, layerOverrides),
+    [detectedTrace, settings, layerOverrides],
   );
   const blurRadius = (settings.blur / 100) * 12;
 
@@ -240,7 +256,7 @@ export function BoomerangGenerator() {
 
   function exportSvg() {
     try {
-      const svg = createBoomerangSvg(settings, detectedTrace?.shapes, activeTemplates);
+      const svg = createBoomerangSvg(settings, detectedTrace?.shapes, layerOverrides);
       downloadBlob(
         new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
         `${assetName || "vectorvisualgen-boomerang"}.svg`,
@@ -253,7 +269,7 @@ export function BoomerangGenerator() {
 
   function exportLayerSvgs() {
     try {
-      const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes, activeTemplates);
+      const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes, layerOverrides);
       const baseName = assetName || "vectorvisualgen-boomerang";
 
       layers.forEach((layer) => {
@@ -269,7 +285,7 @@ export function BoomerangGenerator() {
   }
 
   async function renderCurrentPatternCanvas(scale = 1) {
-    const svg = createBoomerangSvg(settings, detectedTrace?.shapes, activeTemplates);
+    const svg = createBoomerangSvg(settings, detectedTrace?.shapes, layerOverrides);
     const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(svgBlob);
     const image = new Image();
@@ -305,7 +321,7 @@ export function BoomerangGenerator() {
 
   async function saveToGallery() {
     try {
-      const svg = createBoomerangSvg(settings, detectedTrace?.shapes, activeTemplates);
+      const svg = createBoomerangSvg(settings, detectedTrace?.shapes, layerOverrides);
       const canvas = await renderCurrentPatternCanvas();
       const dataUrl = canvas.toDataURL("image/png");
       const createdAt = new Date().toISOString();
@@ -334,7 +350,7 @@ export function BoomerangGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: assetName,
-          svg: createBoomerangSvg(settings, detectedTrace?.shapes, activeTemplates),
+          svg: createBoomerangSvg(settings, detectedTrace?.shapes, layerOverrides),
           gallery: savedGallery.slice(0, MAX_FIGMA_GALLERY_ITEMS).map((item) => ({
             id: item.id,
             name: item.name,
@@ -647,21 +663,84 @@ export function BoomerangGenerator() {
           </section>
 
           <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <PenTool size={17} />
-                <h2 className="text-sm font-semibold">Vlastné tvary</h2>
-              </div>
-              {customTemplates.length > 0 && (
-                <span className="rounded-full bg-[#0b8f8f]/12 px-2 py-0.5 font-mono text-[11px] text-[#0b8f8f]">
-                  {customTemplates.length} aktívnych
-                </span>
-              )}
+            <div className="mb-3 flex items-center gap-2">
+              <PenTool size={17} />
+              <h2 className="text-sm font-semibold">Vlastné tvary</h2>
             </div>
-            <p className="mb-3 text-xs text-[#6b675e]">
-              Nakresli tvary — aplikácia ich použije ako vzory pre generovanie patternu namiesto predvolených.
+
+            {/* Layer tabs */}
+            <div className="mb-3 flex gap-1">
+              {settings.layers.map((layer) => {
+                const active = activeSketchLayer === layer.id;
+                const hasShapes = layerCustomData[layer.id].shapes.length > 0;
+                return (
+                  <button
+                    key={layer.id}
+                    type="button"
+                    onClick={() => setActiveSketchLayer(layer.id)}
+                    className={`relative flex-1 rounded-xl border px-2 py-1.5 text-xs font-semibold transition hover:-translate-y-0.5 ${active ? "bg-white shadow-sm" : "bg-white/40 text-[#6b675e]"}`}
+                    style={{
+                      borderColor: active ? layer.color : "transparent",
+                      boxShadow: active ? `0 0 0 1.5px ${layer.color}` : undefined,
+                    }}
+                  >
+                    {layer.label.split(" ")[0]}
+                    {hasShapes && (
+                      <span
+                        className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                        style={{ background: layer.color }}
+                      >
+                        {layerCustomData[layer.id].shapes.length}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Per-layer sketch pad (remount on tab switch to reset canvas) */}
+            <ShapeSketchPad
+              key={activeSketchLayer}
+              initialShapes={layerCustomData[activeSketchLayer].shapes}
+              onChange={(shapes) =>
+                setLayerCustomData((prev) => ({
+                  ...prev,
+                  [activeSketchLayer]: { ...prev[activeSketchLayer], shapes },
+                }))
+              }
+            />
+
+            {/* Per-layer count override */}
+            <label className="mt-3 block">
+              <span className="mb-2 flex items-center justify-between text-sm">
+                <span className="font-medium">Počet tvarov</span>
+                <span className="font-mono text-xs text-[#6b675e]">
+                  {layerCustomData[activeSketchLayer].count === 0
+                    ? "auto"
+                    : layerCustomData[activeSketchLayer].count}
+                </span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={300}
+                step={1}
+                value={layerCustomData[activeSketchLayer].count}
+                onChange={(e) =>
+                  setLayerCustomData((prev) => ({
+                    ...prev,
+                    [activeSketchLayer]: {
+                      ...prev[activeSketchLayer],
+                      count: Number(e.target.value),
+                    },
+                  }))
+                }
+                className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#d8ddd6] accent-[#0b8f8f]"
+              />
+            </label>
+            <p className="mt-1.5 text-[11px] text-[#6b675e]">
+              0 = automaticky podľa hustoty
             </p>
-            <ShapeSketchPad onChange={setCustomTemplates} />
           </section>
         </aside>
 

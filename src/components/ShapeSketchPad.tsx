@@ -68,11 +68,12 @@ function shapePreviewPath(points: Point[]): string {
 
 type Props = {
   onChange: (templates: Point[][]) => void;
+  initialShapes?: Point[][];
 };
 
-export function ShapeSketchPad({ onChange }: Props) {
+export function ShapeSketchPad({ onChange, initialShapes }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [shapes, setShapes] = useState<Point[][]>([]);
+  const [shapes, setShapes] = useState<Point[][]>(initialShapes ?? []);
   const drawing = useRef(false);
   const stroke = useRef<Point[]>([]);
 
