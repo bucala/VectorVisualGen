@@ -33,6 +33,12 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+## Exports
+
+- `SVG` downloads the full pattern with editable named layer groups.
+- `Vrstvy` downloads three transparent SVG files: bottom, middle, and top layer.
+- `PNG` renders the current full pattern as a high-resolution bitmap.
+
 ## Cloudflare
 
 Cloudflare's current Next.js path is Workers with the OpenNext adapter.

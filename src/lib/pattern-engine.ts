@@ -48,6 +48,13 @@ export type DetectedVectorShape = {
   transform?: string;
 };
 
+export type SeparatedLayerSvg = {
+  layerId: LayerId;
+  label: string;
+  fileSuffix: string;
+  svg: string;
+};
+
 export const DEFAULT_LAYERS: BoomerangLayerSettings[] = [
   {
     id: "bottom",
@@ -143,6 +150,58 @@ function layerIndexFor(id: LayerId) {
 
 function safeColor(color: string) {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : "#000000";
+}
+
+function escapeAttribute(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function layerSettingsFor(settings: BoomerangSettings, layerId: LayerId) {
+  return (
+    settings.layers.find((layer) => layer.id === layerId) ??
+    DEFAULT_LAYERS.find((layer) => layer.id === layerId) ??
+    DEFAULT_LAYERS[0]
+  );
+}
+
+function layerAttributes(settings: BoomerangSettings, layerId: LayerId) {
+  const layer = layerSettingsFor(settings, layerId);
+  const label = escapeAttribute(layer.label);
+
+  return `id="${layerId}-layer" data-layer="${layerId}" data-layer-label="${label}" inkscape:groupmode="layer" inkscape:label="${label}"`;
+}
+
+function blurFilterDef(blur: number) {
+  return blur > 0
+    ? `
+  <defs>
+    <filter id="line-blur" x="-35%" y="-35%" width="170%" height="170%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="${blur.toFixed(2)}" />
+    </filter>
+  </defs>`
+    : "";
+}
+
+function svgDocument(
+  settings: BoomerangSettings,
+  filterDef: string,
+  content: string,
+  includeBackground: boolean,
+) {
+  const background = includeBackground
+    ? `
+  <rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="${safeColor(
+        settings.background,
+      )}" />`
+    : "";
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" viewBox="0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}">
+  ${filterDef}${background}${content}
+</svg>`;
 }
 
 function sampleBounds(layer: BoomerangLayerSettings): SampleBounds {
@@ -373,10 +432,18 @@ export function detectedShapeColor(
   shape: DetectedVectorShape,
   index: number,
 ) {
-  const toneOffset = shape.tone === "light" ? 2 : 1;
-  const layer = settings.layers[(index + toneOffset) % settings.layers.length];
+  const layer = detectedShapeLayer(settings, shape, index);
 
   return safeColor(layer?.color ?? settings.layers[0]?.color ?? "#000000");
+}
+
+function detectedShapeLayer(
+  settings: BoomerangSettings,
+  shape: DetectedVectorShape,
+  index: number,
+) {
+  const toneOffset = shape.tone === "light" ? 2 : 1;
+  return settings.layers[(index + toneOffset) % settings.layers.length];
 }
 
 function detectedShapeOpacity(
@@ -384,10 +451,99 @@ function detectedShapeOpacity(
   shape: DetectedVectorShape,
   index: number,
 ) {
-  const toneOffset = shape.tone === "light" ? 2 : 1;
-  const layer = settings.layers[(index + toneOffset) % settings.layers.length];
+  const layer = detectedShapeLayer(settings, shape, index);
 
   return clamp(layer?.opacity ?? 1, 0, 1);
+}
+
+function renderGeneratedElementMark(element: BoomerangElement, blur: number) {
+  const transform = `translate(${element.x.toFixed(2)} ${element.y.toFixed(
+    2,
+  )}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(
+    3,
+  )})`;
+  const blurMark =
+    blur > 0
+      ? `
+    <path d="${element.path}" transform="${transform}" fill="none" stroke="${
+          element.stroke
+        }" stroke-width="${(element.strokeWidth + blur * 1.15).toFixed(
+          2,
+        )}" stroke-linecap="round" stroke-linejoin="round" opacity="${(
+          element.opacity * 0.62
+        ).toFixed(2)}" filter="url(#line-blur)" vector-effect="non-scaling-stroke" />`
+      : "";
+
+  return `${blurMark}
+    <path d="${element.path}" transform="${transform}" fill="none" stroke="${
+      element.stroke
+    }" stroke-width="${element.strokeWidth.toFixed(
+      2,
+    )}" stroke-linecap="round" stroke-linejoin="round" opacity="${element.opacity.toFixed(
+      2,
+    )}" vector-effect="non-scaling-stroke" />`;
+}
+
+function renderDetectedShapeMark(
+  settings: BoomerangSettings,
+  shape: DetectedVectorShape,
+  index: number,
+  blur: number,
+) {
+  const fill = detectedShapeColor(settings, shape, index);
+  const opacity = detectedShapeOpacity(settings, shape, index);
+  const transform = shape.transform
+    ? ` transform="${escapeAttribute(shape.transform)}"`
+    : "";
+  const blurMark =
+    blur > 0
+      ? `<path d="${shape.d}"${transform} fill="${fill}" opacity="${(
+          opacity * 0.58
+        ).toFixed(2)}" filter="url(#line-blur)" />`
+      : "";
+
+  return `
+    ${blurMark}
+    <path d="${shape.d}"${transform} fill="${fill}" opacity="${opacity.toFixed(
+      2,
+    )}" />`;
+}
+
+function renderLayerGroup(
+  settings: BoomerangSettings,
+  layerId: LayerId,
+  elements: BoomerangElement[],
+  detectedShapes: DetectedVectorShape[],
+  blur: number,
+) {
+  const layerMarks =
+    detectedShapes.length > 0
+      ? detectedShapes
+          .map((shape, index) =>
+            detectedShapeLayer(settings, shape, index)?.id === layerId
+              ? renderDetectedShapeMark(settings, shape, index, blur)
+              : "",
+          )
+          .join("")
+      : elements
+          .filter((element) => element.layerId === layerId)
+          .map((element) => renderGeneratedElementMark(element, blur))
+          .join("");
+
+  return `
+  <g ${layerAttributes(settings, layerId)}>${layerMarks}
+  </g>`;
+}
+
+function renderLayerGroups(
+  settings: BoomerangSettings,
+  elements: BoomerangElement[],
+  detectedShapes: DetectedVectorShape[],
+  blur: number,
+) {
+  return LAYER_ORDER.map((layerId) =>
+    renderLayerGroup(settings, layerId, elements, detectedShapes, blur),
+  ).join("");
 }
 
 export function createBoomerangSvg(
@@ -395,89 +551,36 @@ export function createBoomerangSvg(
   detectedShapes: DetectedVectorShape[] = [],
 ) {
   const blur = (settings.blur / 100) * 12;
-  const filterDef =
-    blur > 0
-      ? `
-  <defs>
-    <filter id="line-blur" x="-35%" y="-35%" width="170%" height="170%" color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="${blur.toFixed(2)}" />
-    </filter>
-  </defs>`
-      : "";
+  const filterDef = blurFilterDef(blur);
+  const elements = detectedShapes.length > 0 ? [] : generateBoomerangElements(settings);
+  const groups = renderLayerGroups(settings, elements, detectedShapes, blur);
 
-  if (detectedShapes.length > 0) {
-    const marks = detectedShapes
-      .map((shape, index) => {
-        const fill = detectedShapeColor(settings, shape, index);
-        const opacity = detectedShapeOpacity(settings, shape, index);
-        const transform = shape.transform ? ` transform="${shape.transform}"` : "";
+  return svgDocument(settings, filterDef, groups, true);
+}
 
-        return `
-  ${
-    blur > 0
-      ? `<path d="${shape.d}"${transform} fill="${fill}" opacity="${(
-          opacity * 0.58
-        ).toFixed(2)}" filter="url(#line-blur)" />`
-      : ""
-  }
-  <path d="${shape.d}"${transform} fill="${fill}" opacity="${opacity.toFixed(
-    2,
-  )}" />`;
-      })
-      .join("");
+export function createSeparatedLayerSvgs(
+  settings: BoomerangSettings,
+  detectedShapes: DetectedVectorShape[] = [],
+): SeparatedLayerSvg[] {
+  const blur = (settings.blur / 100) * 12;
+  const filterDef = blurFilterDef(blur);
+  const elements = detectedShapes.length > 0 ? [] : generateBoomerangElements(settings);
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" viewBox="0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}">
-  ${filterDef}
-  <rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="${safeColor(
-    settings.background,
-  )}" />
-  <g>${marks}
-  </g>
-</svg>`;
-  }
+  return LAYER_ORDER.map((layerId) => {
+    const layer = layerSettingsFor(settings, layerId);
+    const layerContent = renderLayerGroup(
+      settings,
+      layerId,
+      elements,
+      detectedShapes,
+      blur,
+    );
 
-  const elements = generateBoomerangElements(settings);
-  const groups = LAYER_ORDER.map((layerId) => {
-    const layerMarks = elements
-      .filter((element) => element.layerId === layerId)
-      .map((element) => {
-        const transform = `translate(${element.x.toFixed(2)} ${element.y.toFixed(
-          2,
-        )}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(
-          3,
-        )})`;
-        const blurMark =
-          blur > 0
-            ? `
-    <path d="${element.path}" transform="${transform}" fill="none" stroke="${
-        element.stroke
-      }" stroke-width="${(element.strokeWidth + blur * 1.15).toFixed(
-        2,
-      )}" stroke-linecap="round" stroke-linejoin="round" opacity="${(
-        element.opacity * 0.62
-      ).toFixed(2)}" filter="url(#line-blur)" vector-effect="non-scaling-stroke" />`
-            : "";
-
-        return `${blurMark}
-    <path d="${element.path}" transform="${transform}" fill="none" stroke="${
-          element.stroke
-        }" stroke-width="${element.strokeWidth.toFixed(
-          2,
-        )}" stroke-linecap="round" stroke-linejoin="round" opacity="${element.opacity.toFixed(
-          2,
-        )}" vector-effect="non-scaling-stroke" />`;
-      })
-      .join("");
-
-    return `
-  <g data-layer="${layerId}">${layerMarks}
-  </g>`;
-  }).join("");
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" viewBox="0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}">
-  ${filterDef}
-  <rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="${safeColor(
-    settings.background,
-  )}" />${groups}
-</svg>`;
+    return {
+      layerId,
+      label: layer.label,
+      fileSuffix: `${layerId}-layer`,
+      svg: svgDocument(settings, filterDef, layerContent, false),
+    };
+  });
 }

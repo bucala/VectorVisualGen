@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createBoomerangSvg,
+  createSeparatedLayerSvgs,
   DEFAULT_BOOMERANG_SETTINGS,
   generateBoomerangElements,
   LAYER_ORDER,
@@ -50,6 +51,25 @@ test("exports generated SVG with three layer groups", () => {
   assert.match(svg, /data-layer="middle"/);
   assert.match(svg, /data-layer="top"/);
   assert.equal((svg.match(/data-layer="/g) ?? []).length, 3);
+  assert.equal((svg.match(/inkscape:groupmode="layer"/g) ?? []).length, 3);
+  assert.match(svg, /id="bottom-layer"/);
+});
+
+test("exports each layer as a separate transparent SVG", () => {
+  const layerSvgs = createSeparatedLayerSvgs(DEFAULT_BOOMERANG_SETTINGS);
+
+  assert.deepEqual(
+    layerSvgs.map((layer) => layer.layerId),
+    [...LAYER_ORDER],
+  );
+  assert.equal(layerSvgs.length, 3);
+
+  for (const layer of layerSvgs) {
+    assert.match(layer.svg, new RegExp(`data-layer="${layer.layerId}"`));
+    assert.equal((layer.svg.match(/data-layer="/g) ?? []).length, 1);
+    assert.doesNotMatch(layer.svg, /<rect width="1200"/);
+    assert.match(layer.svg, /xmlns:inkscape=/);
+  }
 });
 
 test("overscans oversized contours past the canvas edges", () => {

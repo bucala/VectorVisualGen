@@ -23,6 +23,7 @@ import {
   BoomerangSettings,
   detectedShapeColor,
   createBoomerangSvg,
+  createSeparatedLayerSvgs,
   generateBoomerangElements,
 } from "@/lib/boomerang";
 import { ImageTraceResult, traceImageFile } from "@/lib/image-tracing";
@@ -199,6 +200,19 @@ export function BoomerangGenerator() {
       `${assetName || "vectorvisualgen-boomerang"}.svg`,
     );
     setExportStatus("SVG ready");
+  }
+
+  function exportLayerSvgs() {
+    const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes);
+    const baseName = assetName || "vectorvisualgen-boomerang";
+
+    layers.forEach((layer) => {
+      downloadBlob(
+        new Blob([layer.svg], { type: "image/svg+xml;charset=utf-8" }),
+        `${baseName}-${layer.fileSuffix}.svg`,
+      );
+    });
+    setExportStatus("3 layer SVGs ready");
   }
 
   async function renderCurrentPatternCanvas(scale = 1) {
@@ -515,6 +529,14 @@ export function BoomerangGenerator() {
             >
               <Download size={16} />
               SVG
+            </button>
+            <button
+              type="button"
+              onClick={exportLayerSvgs}
+              className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-sm font-semibold shadow-sm transition hover:-translate-y-0.5"
+            >
+              <Layers3 size={16} />
+              Vrstvy
             </button>
             <button
               type="button"
