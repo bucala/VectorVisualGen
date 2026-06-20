@@ -21,10 +21,10 @@ import {
   DEFAULT_BOOMERANG_SETTINGS,
   LayerId,
   BoomerangSettings,
-  detectedShapeColor,
   createBoomerangSvg,
   createSeparatedLayerSvgs,
   generateBoomerangElements,
+  generateBoomerangElementsFromTrace,
 } from "@/lib/boomerang";
 import { MAX_FIGMA_GALLERY_ITEMS } from "@/lib/figma-sync";
 import { ImageTraceResult, traceImageFile } from "@/lib/image-tracing";
@@ -96,7 +96,10 @@ export function BoomerangGenerator() {
   const [galleryHydrated, setGalleryHydrated] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const elements = useMemo(
-    () => (detectedTrace ? [] : generateBoomerangElements(settings)),
+    () =>
+      detectedTrace
+        ? generateBoomerangElementsFromTrace(settings, detectedTrace.shapes)
+        : generateBoomerangElements(settings),
     [detectedTrace, settings],
   );
   const blurRadius = (settings.blur / 100) * 12;
@@ -541,16 +544,6 @@ export function BoomerangGenerator() {
               <FileImage size={16} />
               PNG
             </button>
-            <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-sm font-semibold shadow-sm transition hover:-translate-y-0.5">
-              <ImageUp size={16} />
-              Input
-              <input
-                type="file"
-                accept="image/*"
-                onChange={onUpload}
-                className="sr-only"
-              />
-            </label>
             <button
               type="button"
               onClick={syncToFigma}
@@ -575,9 +568,21 @@ export function BoomerangGenerator() {
                 <ScanLine size={17} />
                 <h2 className="text-sm font-semibold">Detekcia obrazu</h2>
               </div>
-              <span className="font-mono text-xs text-[#6b675e]">
-                {traceStatus}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs text-[#6b675e]">
+                  {traceStatus}
+                </span>
+                <label className="flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold shadow-sm transition hover:-translate-y-0.5">
+                  <ImageUp size={13} />
+                  Input
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={onUpload}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
             </div>
 
             {detectedTrace ? (
@@ -660,76 +665,40 @@ export function BoomerangGenerator() {
                   </defs>
                 ) : null}
                 <g>
-                  {detectedTrace
-                    ? detectedTrace.shapes.map((shape, index) => {
-                        const fill = detectedShapeColor(settings, shape, index);
-                        const opacity =
-                          settings.layers[index % settings.layers.length]
-                            ?.opacity ?? 1;
-
-                        return (
-                          <g key={shape.id}>
-                            {blurRadius > 0 ? (
-                              <path
-                                d={shape.d}
-                                transform={shape.transform}
-                                fill={fill}
-                                opacity={opacity * 0.58}
-                                filter="url(#line-blur-preview)"
-                              />
-                            ) : null}
-                            <motion.path
-                              d={shape.d}
-                              transform={shape.transform}
-                              fill={fill}
-                              opacity={opacity}
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity }}
-                              transition={{ duration: 0.3, ease: "easeOut" }}
-                            />
-                            <path
-                              d={shape.d}
-                              transform={shape.transform}
-                              fill={fill}
-                              opacity={Math.min(0.28, opacity * 0.28)}
-                            />
-                          </g>
-                        );
-                      })
-                    : elements.map((element) => (
-                        <g key={element.id}>
-                          {element.blur > 0 ? (
-                            <path
-                              d={element.path}
-                              fill="none"
-                              stroke={element.stroke}
-                              strokeWidth={Number(
-                                (element.strokeWidth + element.blur * 1.15).toFixed(2),
-                              )}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              opacity={element.opacity * 0.62}
-                              filter="url(#line-blur-preview)"
-                              vectorEffect="non-scaling-stroke"
-                              transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
-                            />
-                          ) : null}
-                          <motion.path
-                            d={element.path}
-                            fill="none"
-                            stroke={element.stroke}
-                            strokeWidth={Number(element.strokeWidth.toFixed(2))}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            opacity={element.opacity}
-                            vectorEffect="non-scaling-stroke"
-                            transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: element.opacity }}
-                            transition={{ duration: 0.18, ease: "easeOut" }}
-                          />
-                        </g>
-                      ))}
+                  {elements.map((element) => (
+                    <g key={element.id}>
+                      {element.blur > 0 ? (
+                        <path
+                          d={element.path}
+                          fill="none"
+                          stroke={element.stroke}
+                          strokeWidth={Number(
+                            (element.strokeWidth + element.blur * 1.15).toFixed(2),
+                          )}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          opacity={element.opacity * 0.62}
+                          filter="url(#line-blur-preview)"
+                          vectorEffect="non-scaling-stroke"
+                          transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
+                        />
+                      ) : null}
+                      <motion.path
+                        d={element.path}
+                        fill="none"
+                        stroke={element.stroke}
+                        strokeWidth={Number(element.strokeWidth.toFixed(2))}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        opacity={element.opacity}
+                        vectorEffect="non-scaling-stroke"
+                        transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: element.opacity }}
+                        transition={{ duration: 0.18, ease: "easeOut" }}
+                      />
+                    </g>
+                  ))}
                 </g>
               </svg>
             </motion.div>

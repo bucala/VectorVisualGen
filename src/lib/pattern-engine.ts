@@ -59,49 +59,49 @@ export const DEFAULT_LAYERS: BoomerangLayerSettings[] = [
   {
     id: "bottom",
     label: "Spodná vrstva",
-    color: "#5bc092",
+    color: "#00a8c8",
     scale: 0.74,
     chaos: 42,
-    opacity: 0.58,
+    opacity: 0.70,
   },
   {
     id: "middle",
     label: "Stredná vrstva",
-    color: "#ea4d3a",
+    color: "#cc3030",
     scale: 0.82,
-    chaos: 55,
-    opacity: 0.72,
+    chaos: 52,
+    opacity: 0.82,
   },
   {
     id: "top",
     label: "Vrchná vrstva",
-    color: "#f1e7d0",
-    scale: 0.9,
+    color: "#e8dfc4",
+    scale: 0.90,
     chaos: 34,
-    opacity: 0.94,
+    opacity: 0.32,
   },
 ];
 
 export const DEFAULT_BOOMERANG_SETTINGS: BoomerangSettings = {
-  density: 130,
-  strokeWidth: 1.1,
+  density: 135,
+  strokeWidth: 1.2,
   blur: 0,
   rotation: -18,
-  background: "#19120f",
+  background: "#080810",
   seed: 8248,
   layers: DEFAULT_LAYERS,
 };
 
 export const COLOR_PRESETS = [
   {
+    name: "Neon Void",
+    background: "#080810",
+    layers: ["#00a8c8", "#cc3030", "#e8dfc4"],
+  },
+  {
     name: "Ebony Red",
     background: "#19120f",
     layers: ["#5bc092", "#c7352f", "#f1e7d0"],
-  },
-  {
-    name: "Ebony Turquoise",
-    background: "#16110f",
-    layers: ["#c7352f", "#0d9b9b", "#f4e8cc"],
   },
   {
     name: "Glacier",
@@ -464,6 +464,104 @@ export function generateBoomerangElements(
   return elements.sort((a, b) => a.layerIndex - b.layerIndex || a.zIndex - b.zIndex);
 }
 
+function parseScaleFactor(transform?: string): number {
+  if (!transform) return 1;
+  const m = /scale\(([^)]+)\)/.exec(transform);
+  return m ? parseFloat(m[1]) : 1;
+}
+
+function extractShapeCentroid(d: string, scaleFactor: number): Point {
+  const coords: number[] = [];
+  for (const m of d.matchAll(/(-?\d+(?:\.\d+)?)/g)) {
+    coords.push(parseFloat(m[1]));
+  }
+  if (coords.length < 2) return { x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 };
+  let sumX = 0;
+  let sumY = 0;
+  let count = 0;
+  for (let i = 0; i + 1 < coords.length; i += 2) {
+    sumX += coords[i];
+    sumY += coords[i + 1];
+    count += 1;
+  }
+  return { x: (sumX / count) * scaleFactor, y: (sumY / count) * scaleFactor };
+}
+
+export function generateBoomerangElementsFromTrace(
+  settings: BoomerangSettings,
+  detectedShapes: DetectedVectorShape[],
+): BoomerangElement[] {
+  const elements: BoomerangElement[] = [];
+  const blur = (settings.blur / 100) * 12;
+
+  const topLayer = layerSettingsFor(settings, "top");
+  const topLayerIndex = layerIndexFor("top");
+  const topChaos = clamp(topLayer.chaos / 100, 0, 1);
+  const topVisualScale = visualScaleFromSlider(topLayer.scale);
+
+  detectedShapes.forEach((shape, index) => {
+    const sf = parseScaleFactor(shape.transform);
+    const centroid = extractShapeCentroid(shape.d, sf);
+    const r = mulberry32(settings.seed + index * 7919 + 312701);
+    const path = createClosedBoomerangPath(r, topChaos, index);
+    const localScale = topVisualScale * (0.72 + r() * (0.16 + topChaos * 0.34));
+    const rotation = settings.rotation + r() * 360;
+    const strokeWidth = settings.strokeWidth * (0.72 + r() * (0.05 + topChaos * 0.24));
+
+    elements.push({
+      id: `detected-top-${index}`,
+      path,
+      x: centroid.x,
+      y: centroid.y,
+      scale: localScale,
+      rotation,
+      stroke: safeColor(topLayer.color),
+      strokeWidth,
+      opacity: clamp(topLayer.opacity, 0, 1),
+      blur,
+      layerId: "top",
+      layerLabel: topLayer.label,
+      layerIndex: topLayerIndex,
+      zIndex: 2 + r() * 0.4,
+    });
+  });
+
+  const countPerLayer = Math.round(32 + settings.density * 0.78);
+
+  (["bottom", "middle"] as const).forEach((layerId) => {
+    const layer = layerSettingsFor(settings, layerId);
+    const layerIndex = layerIndexFor(layerId);
+    const random = mulberry32(settings.seed + layerIndex * 104729);
+    const chaos = clamp(layer.chaos / 100, 0, 1);
+    const visualScale = visualScaleFromSlider(layer.scale);
+    const points = sampleLayerPoints(random, countPerLayer, layer);
+
+    points.forEach((point, ptIndex) => {
+      const localScale = visualScale * (0.72 + random() * (0.16 + chaos * 0.34));
+      const rotationJitter = jitter(random, 95 + chaos * 240);
+
+      elements.push({
+        id: `${layerId}-boomerang-${ptIndex}`,
+        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17),
+        x: point.x,
+        y: point.y,
+        scale: localScale,
+        rotation: settings.rotation + random() * 360 + rotationJitter,
+        stroke: safeColor(layer.color),
+        strokeWidth: settings.strokeWidth * (0.72 + random() * (0.05 + chaos * 0.24)),
+        opacity: clamp(layer.opacity, 0, 1),
+        blur,
+        layerId,
+        layerLabel: layer.label,
+        layerIndex,
+        zIndex: layerIndex + random() * 0.4,
+      });
+    });
+  });
+
+  return elements.sort((a, b) => a.layerIndex - b.layerIndex || a.zIndex - b.zIndex);
+}
+
 export function detectedShapeColor(
   settings: BoomerangSettings,
   shape: DetectedVectorShape,
@@ -481,16 +579,6 @@ function detectedShapeLayer(
 ) {
   const toneOffset = shape.tone === "light" ? 2 : 1;
   return settings.layers[(index + toneOffset) % settings.layers.length];
-}
-
-function detectedShapeOpacity(
-  settings: BoomerangSettings,
-  shape: DetectedVectorShape,
-  index: number,
-) {
-  const layer = detectedShapeLayer(settings, shape, index);
-
-  return clamp(layer?.opacity ?? 1, 0, 1);
 }
 
 function renderGeneratedElementMark(element: BoomerangElement, blur: number) {
@@ -521,51 +609,16 @@ function renderGeneratedElementMark(element: BoomerangElement, blur: number) {
     )}" vector-effect="non-scaling-stroke" />`;
 }
 
-function renderDetectedShapeMark(
-  settings: BoomerangSettings,
-  shape: DetectedVectorShape,
-  index: number,
-  blur: number,
-) {
-  const fill = detectedShapeColor(settings, shape, index);
-  const opacity = detectedShapeOpacity(settings, shape, index);
-  const transform = shape.transform
-    ? ` transform="${escapeAttribute(shape.transform)}"`
-    : "";
-  const blurMark =
-    blur > 0
-      ? `<path d="${shape.d}"${transform} fill="${fill}" opacity="${(
-          opacity * 0.58
-        ).toFixed(2)}" filter="url(#line-blur)" />`
-      : "";
-
-  return `
-    ${blurMark}
-    <path d="${shape.d}"${transform} fill="${fill}" opacity="${opacity.toFixed(
-      2,
-    )}" />`;
-}
-
 function renderLayerGroup(
   settings: BoomerangSettings,
   layerId: LayerId,
   elements: BoomerangElement[],
-  detectedShapes: DetectedVectorShape[],
   blur: number,
 ) {
-  const layerMarks =
-    detectedShapes.length > 0
-      ? detectedShapes
-          .map((shape, index) =>
-            detectedShapeLayer(settings, shape, index)?.id === layerId
-              ? renderDetectedShapeMark(settings, shape, index, blur)
-              : "",
-          )
-          .join("")
-      : elements
-          .filter((element) => element.layerId === layerId)
-          .map((element) => renderGeneratedElementMark(element, blur))
-          .join("");
+  const layerMarks = elements
+    .filter((element) => element.layerId === layerId)
+    .map((element) => renderGeneratedElementMark(element, blur))
+    .join("");
 
   return `
   <g ${layerAttributes(settings, layerId)}>${layerMarks}
@@ -575,11 +628,10 @@ function renderLayerGroup(
 function renderLayerGroups(
   settings: BoomerangSettings,
   elements: BoomerangElement[],
-  detectedShapes: DetectedVectorShape[],
   blur: number,
 ) {
   return LAYER_ORDER.map((layerId) =>
-    renderLayerGroup(settings, layerId, elements, detectedShapes, blur),
+    renderLayerGroup(settings, layerId, elements, blur),
   ).join("");
 }
 
@@ -589,8 +641,11 @@ export function createBoomerangSvg(
 ) {
   const blur = (settings.blur / 100) * 12;
   const filterDef = blurFilterDef(blur);
-  const elements = detectedShapes.length > 0 ? [] : generateBoomerangElements(settings);
-  const groups = renderLayerGroups(settings, elements, detectedShapes, blur);
+  const elements =
+    detectedShapes.length > 0
+      ? generateBoomerangElementsFromTrace(settings, detectedShapes)
+      : generateBoomerangElements(settings);
+  const groups = renderLayerGroups(settings, elements, blur);
 
   return svgDocument(settings, filterDef, groups, true);
 }
@@ -601,17 +656,14 @@ export function createSeparatedLayerSvgs(
 ): SeparatedLayerSvg[] {
   const blur = (settings.blur / 100) * 12;
   const filterDef = blurFilterDef(blur);
-  const elements = detectedShapes.length > 0 ? [] : generateBoomerangElements(settings);
+  const elements =
+    detectedShapes.length > 0
+      ? generateBoomerangElementsFromTrace(settings, detectedShapes)
+      : generateBoomerangElements(settings);
 
   return LAYER_ORDER.map((layerId) => {
     const layer = layerSettingsFor(settings, layerId);
-    const layerContent = renderLayerGroup(
-      settings,
-      layerId,
-      elements,
-      detectedShapes,
-      blur,
-    );
+    const layerContent = renderLayerGroup(settings, layerId, elements, blur);
 
     return {
       layerId,

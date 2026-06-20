@@ -6,6 +6,7 @@ import {
   createSeparatedLayerSvgs,
   DEFAULT_BOOMERANG_SETTINGS,
   generateBoomerangElements,
+  generateBoomerangElementsFromTrace,
   LAYER_ORDER,
 } from "../src/lib/boomerang.ts";
 
@@ -14,7 +15,7 @@ test("generates exactly three explicit layers in bottom-to-top order", () => {
   const layerIds = Array.from(new Set(elements.map((element) => element.layerId)));
 
   assert.deepEqual(layerIds, [...LAYER_ORDER]);
-  assert.equal(DEFAULT_BOOMERANG_SETTINGS.density, 130);
+  assert.equal(DEFAULT_BOOMERANG_SETTINGS.density, 135);
   assert.equal(DEFAULT_BOOMERANG_SETTINGS.layers.length, 3);
 });
 
@@ -115,6 +116,23 @@ test("overscans oversized contours past the canvas edges", () => {
     assert.match(element.path, /Z$/);
   });
   assert.ok(overscanned.length > 40, "expected visible pattern overscan");
+});
+
+test("generateBoomerangElementsFromTrace places top-layer boomerangs at detected positions", () => {
+  const fakeShapes = [
+    { id: "s0", d: "M 100.00 200.00 C 110.00 190.00 120.00 210.00 100.00 200.00 Z", tone: "dark" as const, transform: "scale(1.5625)" },
+    { id: "s1", d: "M 400.00 300.00 C 410.00 290.00 420.00 310.00 400.00 300.00 Z", tone: "light" as const, transform: "scale(1.5625)" },
+  ];
+  const elements = generateBoomerangElementsFromTrace(DEFAULT_BOOMERANG_SETTINGS, fakeShapes);
+  const topElements = elements.filter((e) => e.layerId === "top");
+  const bottomElements = elements.filter((e) => e.layerId === "bottom");
+  const middleElements = elements.filter((e) => e.layerId === "middle");
+
+  assert.equal(topElements.length, fakeShapes.length);
+  assert.ok(bottomElements.length > 0, "bottom layer should have fill elements");
+  assert.ok(middleElements.length > 0, "middle layer should have fill elements");
+
+  topElements.forEach((el) => assert.match(el.path, /Z$/));
 });
 
 test("exports a stronger blur layer when blur is enabled", () => {
