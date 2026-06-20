@@ -1,4 +1,5 @@
 export const CANVAS_SIZE = 1200;
+const OVERSCAN_RATIO = 0.18;
 
 export const LAYER_ORDER = ["bottom", "middle", "top"] as const;
 
@@ -75,8 +76,8 @@ export const DEFAULT_LAYERS: BoomerangLayerSettings[] = [
 ];
 
 export const DEFAULT_BOOMERANG_SETTINGS: BoomerangSettings = {
-  density: 108,
-  strokeWidth: 1.6,
+  density: 180,
+  strokeWidth: 1.45,
   blur: 0,
   rotation: -18,
   background: "#19120f",
@@ -112,6 +113,13 @@ type Point = {
   y: number;
 };
 
+type SampleBounds = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+};
+
 function mulberry32(seed: number) {
   return () => {
     let t = (seed += 0x6d2b79f5);
@@ -137,11 +145,17 @@ function safeColor(color: string) {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : "#000000";
 }
 
-function layerEdgePadding(layer: BoomerangLayerSettings) {
+function sampleBounds(layer: BoomerangLayerSettings): SampleBounds {
   const chaos = clamp(layer.chaos / 100, 0, 1);
-  const maxLocalScale = layer.scale * (0.58 + chaos * 0.38);
+  const shapeReach = 128 * layer.scale * (0.58 + chaos * 0.38);
+  const overscan = clamp(CANVAS_SIZE * OVERSCAN_RATIO + shapeReach, 180, 340);
 
-  return clamp(118 * maxLocalScale + 18, 70, CANVAS_SIZE * 0.24);
+  return {
+    minX: -overscan,
+    maxX: CANVAS_SIZE + overscan,
+    minY: -overscan,
+    maxY: CANVAS_SIZE + overscan,
+  };
 }
 
 function createClosedBoomerangPath(
@@ -238,105 +252,18 @@ function createClosedBoomerangPath(
   return commands.join(" ");
 }
 
-function poissonDiskSamples(
-  random: () => number,
-  targetCount: number,
-  minDistance: number,
-  edgePadding: number,
-) {
-  const cellSize = minDistance / Math.SQRT2;
-  const columns = Math.ceil(CANVAS_SIZE / cellSize);
-  const rows = Math.ceil(CANVAS_SIZE / cellSize);
-  const grid = new Array<number>(columns * rows).fill(-1);
-  const samples: Point[] = [];
-  const active: number[] = [];
-
-  function gridIndex(point: Point) {
-    return Math.floor(point.y / cellSize) * columns + Math.floor(point.x / cellSize);
-  }
-
-  function canPlace(candidate: Point) {
-    if (
-      candidate.x < edgePadding ||
-      candidate.y < edgePadding ||
-      candidate.x >= CANVAS_SIZE - edgePadding ||
-      candidate.y >= CANVAS_SIZE - edgePadding
-    ) {
-      return false;
-    }
-
-    const col = Math.floor(candidate.x / cellSize);
-    const row = Math.floor(candidate.y / cellSize);
-
-    for (let y = Math.max(0, row - 2); y <= Math.min(rows - 1, row + 2); y += 1) {
-      for (
-        let x = Math.max(0, col - 2);
-        x <= Math.min(columns - 1, col + 2);
-        x += 1
-      ) {
-        const sampleIndex = grid[y * columns + x];
-        if (sampleIndex === -1) continue;
-
-        const sample = samples[sampleIndex];
-        if (Math.hypot(sample.x - candidate.x, sample.y - candidate.y) < minDistance) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  function addSample(point: Point) {
-    samples.push(point);
-    active.push(samples.length - 1);
-    grid[gridIndex(point)] = samples.length - 1;
-  }
-
-  addSample({
-    x: edgePadding + random() * (CANVAS_SIZE - edgePadding * 2),
-    y: edgePadding + random() * (CANVAS_SIZE - edgePadding * 2),
-  });
-
-  while (active.length > 0 && samples.length < targetCount) {
-    const activeIndex = Math.floor(random() * active.length);
-    const sample = samples[active[activeIndex]];
-    let accepted = false;
-
-    for (let attempt = 0; attempt < 26; attempt += 1) {
-      const angle = random() * Math.PI * 2;
-      const radius = minDistance * (1 + random());
-      const candidate = {
-        x: sample.x + Math.cos(angle) * radius,
-        y: sample.y + Math.sin(angle) * radius,
-      };
-
-      if (canPlace(candidate)) {
-        addSample(candidate);
-        accepted = true;
-        break;
-      }
-    }
-
-    if (!accepted) {
-      active.splice(activeIndex, 1);
-    }
-  }
-
-  return samples;
-}
-
 function jitteredGridFallback(
   random: () => number,
   targetCount: number,
   minDistance: number,
-  edgePadding: number,
+  bounds: SampleBounds,
 ) {
   const columns = Math.ceil(Math.sqrt(targetCount * 1.18));
   const rows = Math.ceil(targetCount / columns);
-  const usableSize = CANVAS_SIZE - edgePadding * 2;
-  const cellWidth = usableSize / columns;
-  const cellHeight = usableSize / rows;
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  const cellWidth = width / columns;
+  const cellHeight = height / rows;
   const indexes = Array.from({ length: columns * rows }, (_, index) => index);
   const samples: Point[] = [];
   const relaxedDistance = minDistance * 0.72;
@@ -353,14 +280,14 @@ function jitteredGridFallback(
     const row = Math.floor(index / columns);
     const candidate = {
       x: clamp(
-        edgePadding + (col + 0.5) * cellWidth + jitter(random, cellWidth * 0.54),
-        edgePadding,
-        CANVAS_SIZE - edgePadding,
+        bounds.minX + (col + 0.5) * cellWidth + jitter(random, cellWidth * 0.54),
+        bounds.minX,
+        bounds.maxX,
       ),
       y: clamp(
-        edgePadding + (row + 0.5) * cellHeight + jitter(random, cellHeight * 0.54),
-        edgePadding,
-        CANVAS_SIZE - edgePadding,
+        bounds.minY + (row + 0.5) * cellHeight + jitter(random, cellHeight * 0.54),
+        bounds.minY,
+        bounds.maxY,
       ),
     };
     const collides = samples.some(
@@ -383,33 +310,27 @@ function sampleLayerPoints(
   const densityRadius = Math.sqrt(
     (CANVAS_SIZE * CANVAS_SIZE) / Math.max(1, targetCount * 1.65),
   );
-  const minDistance = clamp(densityRadius * (0.88 + layer.scale * 0.16), 44, 118);
-  const edgePadding = layerEdgePadding(layer);
-  const poisson = poissonDiskSamples(
-    random,
-    targetCount,
-    minDistance,
-    edgePadding,
-  );
-
-  if (poisson.length >= targetCount * 0.86) {
-    return poisson.slice(0, targetCount);
-  }
+  const minDistance = clamp(densityRadius * (0.62 + layer.scale * 0.08), 28, 92);
+  const bounds = sampleBounds(layer);
+  const sampleArea =
+    ((bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY)) /
+    (CANVAS_SIZE * CANVAS_SIZE);
+  const overscanCount = Math.round(targetCount * sampleArea);
 
   return jitteredGridFallback(
     random,
-    targetCount,
+    overscanCount,
     minDistance,
-    edgePadding,
-  ).slice(0, targetCount);
+    bounds,
+  ).slice(0, overscanCount);
 }
 
 export function generateBoomerangElements(
   settings: BoomerangSettings,
 ): BoomerangElement[] {
   const elements: BoomerangElement[] = [];
-  const countPerLayer = Math.round(22 + settings.density * 0.68);
-  const blur = (settings.blur / 100) * 7.5;
+  const countPerLayer = Math.round(32 + settings.density * 0.78);
+  const blur = (settings.blur / 100) * 12;
 
   settings.layers
     .slice()
@@ -422,8 +343,8 @@ export function generateBoomerangElements(
 
       points.forEach((point, index) => {
         const localScale =
-          layer.scale * (0.46 + random() * (0.12 + chaos * 0.38));
-        const rotationJitter = jitter(random, 42 + chaos * 210);
+          layer.scale * (0.36 + random() * (0.12 + chaos * 0.28));
+        const rotationJitter = jitter(random, 70 + chaos * 250);
 
         elements.push({
           id: `${layer.id}-boomerang-${index}`,
@@ -473,12 +394,12 @@ export function createBoomerangSvg(
   settings: BoomerangSettings,
   detectedShapes: DetectedVectorShape[] = [],
 ) {
-  const blur = (settings.blur / 100) * 7.5;
+  const blur = (settings.blur / 100) * 12;
   const filterDef =
     blur > 0
       ? `
   <defs>
-    <filter id="line-blur" x="-12%" y="-12%" width="124%" height="124%" color-interpolation-filters="sRGB">
+    <filter id="line-blur" x="-35%" y="-35%" width="170%" height="170%" color-interpolation-filters="sRGB">
       <feGaussianBlur stdDeviation="${blur.toFixed(2)}" />
     </filter>
   </defs>`
@@ -495,7 +416,7 @@ export function createBoomerangSvg(
   ${
     blur > 0
       ? `<path d="${shape.d}"${transform} fill="${fill}" opacity="${(
-          opacity * 0.38
+          opacity * 0.58
         ).toFixed(2)}" filter="url(#line-blur)" />`
       : ""
   }
@@ -530,10 +451,10 @@ export function createBoomerangSvg(
             ? `
     <path d="${element.path}" transform="${transform}" fill="none" stroke="${
         element.stroke
-      }" stroke-width="${element.strokeWidth.toFixed(
+      }" stroke-width="${(element.strokeWidth + blur * 1.15).toFixed(
         2,
       )}" stroke-linecap="round" stroke-linejoin="round" opacity="${(
-        element.opacity * 0.4
+        element.opacity * 0.62
       ).toFixed(2)}" filter="url(#line-blur)" vector-effect="non-scaling-stroke" />`
             : "";
 

@@ -52,9 +52,10 @@ test("exports generated SVG with three layer groups", () => {
   assert.equal((svg.match(/data-layer="/g) ?? []).length, 3);
 });
 
-test("keeps oversized contours closed and away from canvas edges", () => {
+test("overscans oversized contours past the canvas edges", () => {
   const settings = {
     ...DEFAULT_BOOMERANG_SETTINGS,
+    density: 240,
     layers: DEFAULT_BOOMERANG_SETTINGS.layers.map((layer) => ({
       ...layer,
       scale: 1.65,
@@ -62,12 +63,28 @@ test("keeps oversized contours closed and away from canvas edges", () => {
     })),
   };
   const elements = generateBoomerangElements(settings);
+  const overscanned = elements.filter(
+    (element) =>
+      element.x < 0 ||
+      element.y < 0 ||
+      element.x > 1200 ||
+      element.y > 1200,
+  );
 
   elements.forEach((element) => {
     assert.match(element.path, /Z$/);
-    assert.ok(element.x > 180, `${element.id} x was too close to the left edge`);
-    assert.ok(element.y > 180, `${element.id} y was too close to the top edge`);
-    assert.ok(element.x < 1020, `${element.id} x was too close to the right edge`);
-    assert.ok(element.y < 1020, `${element.id} y was too close to the bottom edge`);
   });
+  assert.ok(overscanned.length > 40, "expected visible pattern overscan");
+});
+
+test("exports a stronger blur layer when blur is enabled", () => {
+  const settings = {
+    ...DEFAULT_BOOMERANG_SETTINGS,
+    blur: 80,
+  };
+  const svg = createBoomerangSvg(settings);
+
+  assert.match(svg, /filter id="line-blur"/);
+  assert.match(svg, /x="-35%"/);
+  assert.match(svg, /filter="url\(#line-blur\)"/);
 });

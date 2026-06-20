@@ -47,7 +47,7 @@ type SavedGalleryItem = {
 };
 
 const numericControls: NumericControl[] = [
-  { key: "density", label: "Hustota", min: 12, max: 120, step: 1 },
+  { key: "density", label: "Hustota", min: 24, max: 260, step: 1 },
   { key: "strokeWidth", label: "Hrubka ciar", min: 0.5, max: 3, step: 0.1 },
   { key: "blur", label: "Rozmazanie", min: 0, max: 100, step: 1, suffix: "%" },
   { key: "rotation", label: "Rotacia", min: -180, max: 180, step: 1 },
@@ -94,7 +94,7 @@ export function BoomerangGenerator() {
     () => (detectedTrace ? [] : generateBoomerangElements(settings)),
     [detectedTrace, settings],
   );
-  const blurRadius = (settings.blur / 100) * 7.5;
+  const blurRadius = (settings.blur / 100) * 12;
 
   function updateSetting<Key extends keyof BoomerangSettings>(
     key: Key,
@@ -318,6 +318,12 @@ export function BoomerangGenerator() {
                     onChange={(event) =>
                       updateSetting(control.key, Number(event.target.value))
                     }
+                    onInput={(event) =>
+                      updateSetting(
+                        control.key,
+                        Number(event.currentTarget.value),
+                      )
+                    }
                     className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#d8ddd6] accent-[#0b8f8f]"
                   />
                 </label>
@@ -424,6 +430,13 @@ export function BoomerangGenerator() {
                         onChange={(event) =>
                           updateLayer(layer.id, key, Number(event.target.value))
                         }
+                        onInput={(event) =>
+                          updateLayer(
+                            layer.id,
+                            key,
+                            Number(event.currentTarget.value),
+                          )
+                        }
                         className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#d8ddd6] accent-[#0b8f8f]"
                       />
                     </label>
@@ -517,15 +530,15 @@ export function BoomerangGenerator() {
           </section>
         </aside>
 
-        <section className="relative flex-1 overflow-hidden px-4 py-5 sm:px-8 lg:px-10">
+        <section className="relative min-w-0 flex-1 overflow-hidden px-4 py-5 sm:px-8 lg:px-10">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_15%,rgba(255,255,255,0.75),transparent_32%),linear-gradient(135deg,#e8ece8,#d6ddd6_45%,#f2ede5)]" />
-          <div className="relative mx-auto flex max-w-7xl flex-col gap-5">
+          <div className="relative mx-auto flex w-full min-w-0 max-w-7xl flex-col gap-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <p className="font-mono text-xs uppercase tracking-[0.22em] text-[#6b675e]">
                   {assetName}
                 </p>
-                <h2 className="mt-1 text-3xl font-semibold tracking-normal sm:text-4xl">
+                <h2 className="mt-1 max-w-full text-3xl font-semibold tracking-normal sm:text-4xl">
                   {detectedTrace
                     ? "Detected vector pattern"
                     : "Retro boomerang pattern"}
@@ -540,14 +553,14 @@ export function BoomerangGenerator() {
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.55, ease: "easeOut" }}
-              className="overflow-hidden rounded-[32px] border border-white/70 bg-white/55 p-3 shadow-[0_24px_90px_rgba(31,35,28,0.2)] backdrop-blur-xl"
+              className="w-full min-w-0 max-w-full overflow-hidden rounded-[32px] border border-white/70 bg-white/55 p-3 shadow-[0_24px_90px_rgba(31,35,28,0.2)] backdrop-blur-xl"
             >
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}`}
                 role="img"
                 aria-label="Generated retro boomerang vector pattern"
-                className="aspect-square w-full rounded-[24px]"
+                className="block aspect-square w-full min-w-0 max-w-full rounded-[24px]"
               >
                 <rect
                   width={CANVAS_SIZE}
@@ -558,10 +571,10 @@ export function BoomerangGenerator() {
                   <defs>
                     <filter
                       id="line-blur-preview"
-                      x="-12%"
-                      y="-12%"
-                      width="124%"
-                      height="124%"
+                      x="-35%"
+                      y="-35%"
+                      width="170%"
+                      height="170%"
                       colorInterpolationFilters="sRGB"
                     >
                       <feGaussianBlur stdDeviation={blurRadius} />
@@ -583,7 +596,7 @@ export function BoomerangGenerator() {
                                 d={shape.d}
                                 transform={shape.transform}
                                 fill={fill}
-                                opacity={opacity * 0.38}
+                                opacity={opacity * 0.58}
                                 filter="url(#line-blur-preview)"
                               />
                             ) : null}
@@ -612,10 +625,12 @@ export function BoomerangGenerator() {
                               d={element.path}
                               fill="none"
                               stroke={element.stroke}
-                              strokeWidth={Number(element.strokeWidth.toFixed(2))}
+                              strokeWidth={Number(
+                                (element.strokeWidth + element.blur * 1.15).toFixed(2),
+                              )}
                               strokeLinecap="round"
                               strokeLinejoin="round"
-                              opacity={element.opacity * 0.4}
+                              opacity={element.opacity * 0.62}
                               filter="url(#line-blur-preview)"
                               vectorEffect="non-scaling-stroke"
                               transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
