@@ -21,6 +21,7 @@ import {
   DEFAULT_BOOMERANG_SETTINGS,
   LayerId,
   BoomerangSettings,
+  Point,
   createBoomerangSvg,
   createSeparatedLayerSvgs,
   generateBoomerangElements,
@@ -28,6 +29,7 @@ import {
 } from "@/lib/boomerang";
 import { MAX_FIGMA_GALLERY_ITEMS } from "@/lib/figma-sync";
 import { ImageTraceResult, traceImageFile } from "@/lib/image-tracing";
+import { ShapeSketchPad } from "@/components/ShapeSketchPad";
 
 type NumericControl = {
   key: keyof Pick<
@@ -94,13 +96,16 @@ export function BoomerangGenerator() {
   const [exportStatus, setExportStatus] = useState("Ready");
   const [savedGallery, setSavedGallery] = useState<SavedGalleryItem[]>([]);
   const [galleryHydrated, setGalleryHydrated] = useState(false);
+  const [customTemplates, setCustomTemplates] = useState<Point[][]>([]);
   const svgRef = useRef<SVGSVGElement>(null);
+  const activeTemplates = customTemplates.length > 0 ? customTemplates : undefined;
   const elements = useMemo(
     () =>
       detectedTrace
-        ? generateBoomerangElementsFromTrace(settings, detectedTrace.shapes)
-        : generateBoomerangElements(settings),
-    [detectedTrace, settings],
+        ? generateBoomerangElementsFromTrace(settings, detectedTrace.shapes, activeTemplates)
+        : generateBoomerangElements(settings, activeTemplates),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [detectedTrace, settings, customTemplates],
   );
   const blurRadius = (settings.blur / 100) * 12;
 
@@ -235,7 +240,7 @@ export function BoomerangGenerator() {
 
   function exportSvg() {
     try {
-      const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
+      const svg = createBoomerangSvg(settings, detectedTrace?.shapes, activeTemplates);
       downloadBlob(
         new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
         `${assetName || "vectorvisualgen-boomerang"}.svg`,
@@ -248,7 +253,7 @@ export function BoomerangGenerator() {
 
   function exportLayerSvgs() {
     try {
-      const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes);
+      const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes, activeTemplates);
       const baseName = assetName || "vectorvisualgen-boomerang";
 
       layers.forEach((layer) => {
@@ -264,7 +269,7 @@ export function BoomerangGenerator() {
   }
 
   async function renderCurrentPatternCanvas(scale = 1) {
-    const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
+    const svg = createBoomerangSvg(settings, detectedTrace?.shapes, activeTemplates);
     const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(svgBlob);
     const image = new Image();
@@ -300,7 +305,7 @@ export function BoomerangGenerator() {
 
   async function saveToGallery() {
     try {
-      const svg = createBoomerangSvg(settings, detectedTrace?.shapes);
+      const svg = createBoomerangSvg(settings, detectedTrace?.shapes, activeTemplates);
       const canvas = await renderCurrentPatternCanvas();
       const dataUrl = canvas.toDataURL("image/png");
       const createdAt = new Date().toISOString();
@@ -329,7 +334,7 @@ export function BoomerangGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: assetName,
-          svg: createBoomerangSvg(settings, detectedTrace?.shapes),
+          svg: createBoomerangSvg(settings, detectedTrace?.shapes, activeTemplates),
           gallery: savedGallery.slice(0, MAX_FIGMA_GALLERY_ITEMS).map((item) => ({
             id: item.id,
             name: item.name,
@@ -639,6 +644,24 @@ export function BoomerangGenerator() {
                 Ziadny raster
               </div>
             )}
+          </section>
+
+          <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <PenTool size={17} />
+                <h2 className="text-sm font-semibold">Vlastné tvary</h2>
+              </div>
+              {customTemplates.length > 0 && (
+                <span className="rounded-full bg-[#0b8f8f]/12 px-2 py-0.5 font-mono text-[11px] text-[#0b8f8f]">
+                  {customTemplates.length} aktívnych
+                </span>
+              )}
+            </div>
+            <p className="mb-3 text-xs text-[#6b675e]">
+              Nakresli tvary — aplikácia ich použije ako vzory pre generovanie patternu namiesto predvolených.
+            </p>
+            <ShapeSketchPad onChange={setCustomTemplates} />
           </section>
         </aside>
 
