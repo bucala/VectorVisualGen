@@ -24,6 +24,11 @@ function rateLimit(request: Request) {
   const bucket = rateLimits.get(key);
 
   if (!bucket || bucket.resetAt <= now) {
+    if (rateLimits.size > 1000) {
+      for (const [k, v] of rateLimits) {
+        if (v.resetAt <= now) rateLimits.delete(k);
+      }
+    }
     rateLimits.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return null;
   }
@@ -91,7 +96,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const response = await fetch(
+  const figmaResponse = await fetch(
     `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${encodeURIComponent(
       nodeId,
     )}`,
@@ -102,12 +107,12 @@ export async function POST(request: Request) {
     },
   );
 
-  if (!response.ok) {
+  if (!figmaResponse.ok) {
     return NextResponse.json(
       {
         ok: false,
         error: "Figma API request failed.",
-        status: response.status,
+        status: figmaResponse.status,
       },
       { status: 502 },
     );

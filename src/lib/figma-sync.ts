@@ -51,6 +51,10 @@ export function parseFigmaSyncBody(raw: string): ParsedFigmaSyncBody {
     return { ok: false, error: "Name must be a string.", status: 400 };
   }
 
+  if (typeof name === "string" && name.trim().length > 200) {
+    return { ok: false, error: "Name must be 200 characters or fewer.", status: 400 };
+  }
+
   if (typeof svg !== "string" || svg.trim().length === 0) {
     return { ok: false, error: "Missing SVG payload.", status: 400 };
   }
