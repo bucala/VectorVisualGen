@@ -2,18 +2,31 @@
 
 import { motion } from "framer-motion";
 import {
+  Clipboard,
+  ClipboardCheck,
   Download,
   FileImage,
+  HelpCircle,
   ImageUp,
   Layers3,
   PenTool,
   RefreshCw,
+  RotateCcw,
+  RotateCw,
   Save,
   ScanLine,
   Shuffle,
+  Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   CANVAS_SIZE,
@@ -25,6 +38,7 @@ import {
   LayerOverrides,
   Point,
   createBoomerangSvg,
+  createBoomerangSvgAnimated,
   createSeparatedLayerSvgs,
   generateBoomerangElements,
   generateBoomerangElementsFromTrace,
@@ -53,17 +67,25 @@ type SavedGalleryItem = {
   createdAt: string;
 };
 
+type PngScale = 1 | 2 | 4;
+
 const numericControls: NumericControl[] = [
   { key: "density", label: "Hustota", min: 24, max: 260, step: 1 },
-  { key: "strokeWidth", label: "Hrubka ciar", min: 0.5, max: 3, step: 0.1 },
+  { key: "strokeWidth", label: "Hrúbka ramien", min: 0.5, max: 3, step: 0.1 },
   { key: "blur", label: "Rozmazanie", min: 0, max: 100, step: 1, suffix: "%" },
-  { key: "rotation", label: "Rotacia", min: -180, max: 180, step: 1 },
+  { key: "rotation", label: "Rotácia", min: -180, max: 180, step: 1 },
 ];
 
 const MAX_GALLERY_ITEMS = 12;
 const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
 const GALLERY_STORAGE_KEY = "vectorvisualgen.gallery.v1";
 const SETTINGS_STORAGE_KEY = "vectorvisualgen.settings.v1";
+
+const KEYBOARD_SHORTCUTS = [
+  { keys: "Ctrl+Z", action: "Späť (Undo)" },
+  { keys: "Ctrl+Shift+Z", action: "Vpred (Redo)" },
+  { keys: "Ctrl+Y", action: "Vpred (Redo)" },
+];
 
 function hslToHex(h: number, s: number, l: number) {
   const sl = s / 100;
@@ -104,6 +126,35 @@ function buildRandomSettings(current: BoomerangSettings): BoomerangSettings {
   };
 }
 
+function hashStringToSeed(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash = hash | 0;
+  }
+  return Math.abs(hash) % 100000;
+}
+
+function encodeSettingsToUrl(settings: BoomerangSettings): string {
+  try {
+    return btoa(JSON.stringify(settings));
+  } catch {
+    return "";
+  }
+}
+
+function decodeSettingsFromUrl(encoded: string): BoomerangSettings | null {
+  try {
+    const decoded = JSON.parse(atob(encoded)) as Partial<BoomerangSettings>;
+    if (decoded && typeof decoded.density === "number" && Array.isArray(decoded.layers)) {
+      return { ...DEFAULT_BOOMERANG_SETTINGS, ...decoded };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -129,24 +180,28 @@ export function BoomerangGenerator() {
     DEFAULT_BOOMERANG_SETTINGS,
   );
   const [assetName, setAssetName] = useState("default-boomerang");
-  const [detectedTrace, setDetectedTrace] = useState<ImageTraceResult | null>(
-    null,
-  );
+  const [detectedTrace, setDetectedTrace] = useState<ImageTraceResult | null>(null);
   const [traceStatus, setTraceStatus] = useState("No input");
   const [figmaStatus, setFigmaStatus] = useState("Ready");
   const [galleryStatus, setGalleryStatus] = useState("Ready");
   const [exportStatus, setExportStatus] = useState("Ready");
+  const [isExporting, setIsExporting] = useState(false);
   const [savedGallery, setSavedGallery] = useState<SavedGalleryItem[]>([]);
   const [galleryHydrated, setGalleryHydrated] = useState(false);
   const [layerCustomData, setLayerCustomData] = useState<
     Record<LayerId, { shapes: Point[][]; count: number }>
   >({ bottom: { shapes: [], count: 0 }, middle: { shapes: [], count: 0 }, top: { shapes: [], count: 0 } });
   const [activeSketchLayer, setActiveSketchLayer] = useState<LayerId>("bottom");
+  const [pngScale, setPngScale] = useState<PngScale>(2);
+  const [seedWord, setSeedWord] = useState("");
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [urlCopied, setUrlCopied] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const undoStack = useRef<BoomerangSettings[]>([]);
   const redoStack = useRef<BoomerangSettings[]>([]);
   const figmaInFlight = useRef(false);
   const [settingsHydrated, setSettingsHydrated] = useState(false);
+
   const layerOverrides = useMemo<LayerOverrides>(() => {
     const out: LayerOverrides = {};
     for (const id of LAYER_ORDER) {
@@ -160,6 +215,7 @@ export function BoomerangGenerator() {
     }
     return out;
   }, [layerCustomData]);
+
   const elements = useMemo(
     () =>
       detectedTrace
@@ -169,15 +225,12 @@ export function BoomerangGenerator() {
   );
   const blurRadius = (settings.blur / 100) * 12;
 
+  // Gallery hydration
   useEffect(() => {
     window.queueMicrotask(() => {
       try {
         const stored = window.localStorage.getItem(GALLERY_STORAGE_KEY);
-        if (!stored) {
-          setGalleryHydrated(true);
-          return;
-        }
-
+        if (!stored) { setGalleryHydrated(true); return; }
         const parsed = JSON.parse(stored) as SavedGalleryItem[];
         const validItems = Array.isArray(parsed)
           ? parsed.filter(
@@ -189,7 +242,6 @@ export function BoomerangGenerator() {
                 typeof item.createdAt === "string",
             )
           : [];
-
         setSavedGallery(validItems.slice(0, MAX_GALLERY_ITEMS));
         if (validItems.length > 0) setGalleryStatus(`${validItems.length} loaded`);
       } catch {
@@ -202,20 +254,27 @@ export function BoomerangGenerator() {
 
   useEffect(() => {
     if (!galleryHydrated) return;
-
     try {
-      window.localStorage.setItem(
-        GALLERY_STORAGE_KEY,
-        JSON.stringify(savedGallery),
-      );
+      window.localStorage.setItem(GALLERY_STORAGE_KEY, JSON.stringify(savedGallery));
     } catch (error) {
       console.error("Failed to save gallery:", error);
     }
   }, [galleryHydrated, savedGallery]);
 
+  // Settings hydration: URL params take priority over localStorage
   useEffect(() => {
     window.queueMicrotask(() => {
       try {
+        const params = new URLSearchParams(window.location.search);
+        const urlEncoded = params.get("s");
+        if (urlEncoded) {
+          const urlSettings = decodeSettingsFromUrl(urlEncoded);
+          if (urlSettings) {
+            setSettings(urlSettings);
+            setSettingsHydrated(true);
+            return;
+          }
+        }
         const stored = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
         if (stored) {
           const parsed = JSON.parse(stored) as Partial<BoomerangSettings>;
@@ -242,6 +301,7 @@ export function BoomerangGenerator() {
     }
   }, [settingsHydrated, settings]);
 
+  // Keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const ctrl = e.ctrlKey || e.metaKey;
@@ -276,6 +336,26 @@ export function BoomerangGenerator() {
       redoStack.current = [];
       return updater(prev);
     });
+  }
+
+  function undo() {
+    const prev = undoStack.current.pop();
+    if (prev) {
+      setSettings((cur) => {
+        redoStack.current = [...redoStack.current, cur].slice(-20);
+        return prev;
+      });
+    }
+  }
+
+  function redo() {
+    const next = redoStack.current.pop();
+    if (next) {
+      setSettings((cur) => {
+        undoStack.current = [...undoStack.current, cur].slice(-20);
+        return next;
+      });
+    }
   }
 
   function updateSetting<Key extends keyof BoomerangSettings>(
@@ -323,6 +403,26 @@ export function BoomerangGenerator() {
     setFigmaStatus("Ready");
     setGalleryStatus("Ready");
     setExportStatus("Ready");
+    undoStack.current = [];
+    redoStack.current = [];
+  }
+
+  function applySeedWord() {
+    if (!seedWord.trim()) return;
+    withHistory((prev) => ({ ...prev, seed: hashStringToSeed(seedWord.trim()) }));
+  }
+
+  function copyShareUrl() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("s", encodeSettingsToUrl(settings));
+      navigator.clipboard.writeText(url.toString()).then(() => {
+        setUrlCopied(true);
+        setTimeout(() => setUrlCopied(false), 2000);
+      });
+    } catch (error) {
+      console.error("Failed to copy URL:", error);
+    }
   }
 
   function exportSvg() {
@@ -343,7 +443,6 @@ export function BoomerangGenerator() {
     try {
       const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes, layerOverrides);
       const baseName = assetName || "vectorvisualgen-boomerang";
-
       layers.forEach((layer) => {
         downloadBlob(
           new Blob([layer.svg], { type: "image/svg+xml;charset=utf-8" }),
@@ -357,7 +456,21 @@ export function BoomerangGenerator() {
     }
   }
 
-  async function renderCurrentPatternCanvas(scale = 1) {
+  function exportAnimatedSvg() {
+    try {
+      const svg = createBoomerangSvgAnimated(settings, detectedTrace?.shapes, layerOverrides);
+      downloadBlob(
+        new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+        `${assetName || "vectorvisualgen-boomerang"}-animated.svg`,
+      );
+      setExportStatus("Animated SVG ready");
+    } catch (error) {
+      console.error("Animated SVG export failed:", error);
+      setExportStatus("Animated SVG failed");
+    }
+  }
+
+  async function renderCurrentPatternCanvas(scale: number = 1) {
     const svg = createBoomerangSvg(settings, detectedTrace?.shapes, layerOverrides);
     const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(svgBlob);
@@ -381,15 +494,27 @@ export function BoomerangGenerator() {
   }
 
   async function exportPng() {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportStatus("Exporting PNG…");
     try {
-      const canvas = await renderCurrentPatternCanvas(2);
-
-      canvas.toBlob((blob) => {
-        if (blob) downloadBlob(blob, `${assetName || "boomerang"}-2400.png`);
-      }, "image/png");
+      const canvas = await renderCurrentPatternCanvas(pngScale);
+      await new Promise<void>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error("Canvas produced null blob."));
+            return;
+          }
+          downloadBlob(blob, `${assetName || "boomerang"}-${CANVAS_SIZE * pngScale}.png`);
+          resolve();
+        }, "image/png");
+      });
+      setExportStatus(`PNG ${CANVAS_SIZE * pngScale}px ready`);
     } catch (error) {
       console.error("PNG export failed:", error);
       setExportStatus("PNG failed");
+    } finally {
+      setIsExporting(false);
     }
   }
 
@@ -435,25 +560,38 @@ export function BoomerangGenerator() {
           })),
         }),
       });
-      const result = (await response.json()) as {
-        ok?: boolean;
-        mode?: string;
-        targetVerified?: boolean;
-        galleryCount?: number;
-        error?: string;
-      };
 
-      if (!response.ok || !result.ok) {
-        setFigmaStatus(result.error ?? "Failed");
+      // Q2: validate response shape before accessing fields
+      let result: unknown;
+      try {
+        result = await response.json();
+      } catch {
+        setFigmaStatus("Invalid response");
+        return;
+      }
+
+      if (
+        typeof result !== "object" ||
+        result === null ||
+        !("ok" in result)
+      ) {
+        setFigmaStatus("Bad response");
+        return;
+      }
+
+      const r = result as { ok?: boolean; mode?: string; targetVerified?: boolean; galleryCount?: number; error?: string };
+
+      if (!response.ok || !r.ok) {
+        setFigmaStatus(typeof r.error === "string" ? r.error : "Failed");
         return;
       }
 
       const galleryLabel =
-        result.galleryCount !== undefined
-          ? ` / ${result.galleryCount} gallery`
+        typeof r.galleryCount === "number"
+          ? ` / ${r.galleryCount} gallery`
           : "";
       setFigmaStatus(
-        `${result.targetVerified ? "Bridge target ok" : "Bridge ready"}${galleryLabel}`,
+        `${r.targetVerified ? "Bridge target ok" : "Bridge ready"}${galleryLabel}`,
       );
     } catch (error) {
       console.error("Figma sync failed:", error);
@@ -495,6 +633,40 @@ export function BoomerangGenerator() {
 
   return (
     <main className="min-h-screen bg-[#e8ece8] text-[#191716]">
+      {/* Keyboard shortcuts modal */}
+      {showShortcuts && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setShowShortcuts(false)}
+        >
+          <div
+            className="w-72 rounded-3xl border border-white/70 bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-base font-semibold">Klávesové skratky</h3>
+              <button
+                type="button"
+                onClick={() => setShowShortcuts(false)}
+                className="grid size-7 place-items-center rounded-full border border-black/10 text-[#6b675e] hover:bg-[#f0f0ee]"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <ul className="space-y-2">
+              {KEYBOARD_SHORTCUTS.map((s) => (
+                <li key={s.keys} className="flex items-center justify-between gap-3 text-sm">
+                  <kbd className="rounded-lg border border-black/10 bg-[#f4f4f2] px-2 py-0.5 font-mono text-xs">
+                    {s.keys}
+                  </kbd>
+                  <span className="text-[#6b675e]">{s.action}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
       <div className="flex min-h-screen flex-col-reverse lg:flex-row">
         <aside className="border-t border-black/10 bg-white/62 px-5 py-5 backdrop-blur-xl lg:w-[390px] lg:shrink-0 lg:border-r lg:border-t-0">
           <div className="mb-5 flex items-center justify-between gap-3">
@@ -506,15 +678,26 @@ export function BoomerangGenerator() {
                 Boomerang Studio
               </h1>
             </div>
-            <button
-              type="button"
-              onClick={resetDefault}
-              className="grid size-10 place-items-center rounded-full border border-black/10 bg-white text-[#2d2a25] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-              aria-label="Reset default pattern"
-              title="Reset"
-            >
-              <RefreshCw size={18} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowShortcuts(true)}
+                className="grid size-8 place-items-center rounded-full border border-black/10 bg-white text-[#6b675e] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                aria-label="Keyboard shortcuts"
+                title="Klávesové skratky"
+              >
+                <HelpCircle size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={resetDefault}
+                className="grid size-10 place-items-center rounded-full border border-black/10 bg-white text-[#2d2a25] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                aria-label="Reset default pattern"
+                title="Reset"
+              >
+                <RefreshCw size={18} />
+              </button>
+            </div>
           </div>
 
           <section className="rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.12)]">
@@ -548,6 +731,29 @@ export function BoomerangGenerator() {
               ))}
             </div>
 
+            {/* Seed from word */}
+            <div className="mt-4">
+              <label className="block text-sm font-medium mb-1.5">Seed zo slova</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="napr. studio, neon…"
+                  value={seedWord}
+                  onChange={(e) => setSeedWord(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && applySeedWord()}
+                  className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-1.5 text-sm outline-none focus:border-[#0b8f8f] focus:ring-1 focus:ring-[#0b8f8f]"
+                />
+                <button
+                  type="button"
+                  onClick={applySeedWord}
+                  disabled={!seedWord.trim()}
+                  className="flex items-center gap-1 rounded-xl border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:-translate-y-0.5 disabled:opacity-40"
+                  title="Aplikovať seed"
+                >
+                  <Sparkles size={12} />
+                </button>
+              </div>
+            </div>
           </section>
 
           <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
@@ -562,10 +768,7 @@ export function BoomerangGenerator() {
                 >
                   <span className="mb-2 block">{preset.name}</span>
                   <span className="flex overflow-hidden rounded-full">
-                    {[
-                      preset.background,
-                      ...preset.layers,
-                    ].map((color) => (
+                    {[preset.background, ...preset.layers].map((color) => (
                       <span
                         key={color}
                         className="h-5 flex-1"
@@ -579,9 +782,7 @@ export function BoomerangGenerator() {
 
             <div className="mt-4 grid grid-cols-2 gap-3">
               {(
-                [
-                  ["background", "Pozadie"],
-                ] as const
+                [["background", "Pozadie"]] as const
               ).map(([key, label]) => (
                 <label key={key} className="text-xs font-medium">
                   <span className="mb-1 block text-[#6b675e]">{label}</span>
@@ -655,30 +856,67 @@ export function BoomerangGenerator() {
             </div>
           </section>
 
-          <section className="mt-4 grid grid-cols-3 gap-2">
+          {/* Export section */}
+          <section className="mt-4 space-y-2">
+            {/* PNG scale selector */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-[#6b675e]">PNG rozlíšenie:</span>
+              <div className="flex gap-1">
+                {([1, 2, 4] as PngScale[]).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setPngScale(s)}
+                    className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
+                      pngScale === s
+                        ? "border-[#0b8f8f] bg-[#0b8f8f] text-white"
+                        : "border-black/10 bg-white text-[#6b675e] hover:border-[#0b8f8f]"
+                    }`}
+                  >
+                    {s}× <span className="opacity-70">({CANVAS_SIZE * s}px)</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={exportSvg}
+                disabled={isExporting}
+                className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-sm font-semibold shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Download size={16} />
+                SVG
+              </button>
+              <button
+                type="button"
+                onClick={exportLayerSvgs}
+                disabled={isExporting}
+                className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-sm font-semibold shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Layers3 size={16} />
+                Vrstvy
+              </button>
+              <button
+                type="button"
+                onClick={exportPng}
+                disabled={isExporting}
+                className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-sm font-semibold shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FileImage size={16} />
+                PNG
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={exportSvg}
-              className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-sm font-semibold shadow-sm transition hover:-translate-y-0.5"
+              onClick={exportAnimatedSvg}
+              disabled={isExporting}
+              className="flex h-9 w-full items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-xs font-semibold shadow-sm transition hover:-translate-y-0.5 disabled:opacity-50"
             >
-              <Download size={16} />
-              SVG
-            </button>
-            <button
-              type="button"
-              onClick={exportLayerSvgs}
-              className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-sm font-semibold shadow-sm transition hover:-translate-y-0.5"
-            >
-              <Layers3 size={16} />
-              Vrstvy
-            </button>
-            <button
-              type="button"
-              onClick={exportPng}
-              className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-sm font-semibold shadow-sm transition hover:-translate-y-0.5"
-            >
-              <FileImage size={16} />
-              PNG
+              <Sparkles size={13} />
+              Animated SVG
             </button>
           </section>
 
@@ -690,6 +928,7 @@ export function BoomerangGenerator() {
             Galéria: {galleryStatus} / Export: {exportStatus}
           </p>
 
+          {/* Image detection */}
           <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -697,9 +936,7 @@ export function BoomerangGenerator() {
                 <h2 className="text-sm font-semibold">Detekcia obrazu</h2>
               </div>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-xs text-[#6b675e]">
-                  {traceStatus}
-                </span>
+                <span className="font-mono text-xs text-[#6b675e]">{traceStatus}</span>
                 <label className="flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold shadow-sm transition hover:-translate-y-0.5">
                   <ImageUp size={13} />
                   Input
@@ -718,7 +955,7 @@ export function BoomerangGenerator() {
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={detectedTrace.previewUrl}
-                  alt=""
+                  alt={`Detekovaný obraz: ${detectedTrace.shapes.length} ciest, ${Math.round(detectedTrace.coverage * 100)}% pokrytie`}
                   className="aspect-square w-full rounded-2xl border border-black/10 object-cover"
                 />
                 <div className="grid grid-cols-3 gap-2 font-mono text-[11px] text-[#6b675e]">
@@ -735,18 +972,18 @@ export function BoomerangGenerator() {
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-black/15 bg-white/45 px-3 py-4 text-center text-xs text-[#6b675e]">
-                Ziadny raster
+                Žiadny raster
               </div>
             )}
           </section>
 
+          {/* Custom shapes */}
           <section className="mt-4 rounded-[28px] border border-white/75 bg-white/72 p-4 shadow-[0_20px_70px_rgba(31,35,28,0.1)]">
             <div className="mb-3 flex items-center gap-2">
               <PenTool size={17} />
               <h2 className="text-sm font-semibold">Vlastné tvary</h2>
             </div>
 
-            {/* Layer tabs */}
             <div className="mb-3 flex gap-1">
               {settings.layers.map((layer) => {
                 const active = activeSketchLayer === layer.id;
@@ -776,7 +1013,6 @@ export function BoomerangGenerator() {
               })}
             </div>
 
-            {/* Per-layer sketch pad (remount on tab switch to reset canvas) */}
             <ShapeSketchPad
               key={activeSketchLayer}
               initialShapes={layerCustomData[activeSketchLayer].shapes}
@@ -788,7 +1024,6 @@ export function BoomerangGenerator() {
               }
             />
 
-            {/* Per-layer count override */}
             <label className="mt-3 block">
               <span className="mb-2 flex items-center justify-between text-sm">
                 <span className="font-medium">Počet tvarov</span>
@@ -831,13 +1066,11 @@ export function BoomerangGenerator() {
                   {assetName}
                 </p>
                 <h2 className="mt-1 max-w-full text-3xl font-semibold tracking-normal sm:text-4xl">
-                  {detectedTrace
-                    ? "Detected vector pattern"
-                    : "Retro boomerang pattern"}
+                  {detectedTrace ? "Detected vector pattern" : "Retro boomerang pattern"}
                 </h2>
               </div>
               <div className="rounded-full border border-white/70 bg-white/65 px-4 py-2 font-mono text-xs shadow-sm backdrop-blur-xl">
-                {CANVAS_SIZE} x {CANVAS_SIZE} SVG
+                {CANVAS_SIZE} × {CANVAS_SIZE} SVG
               </div>
             </div>
 
@@ -879,28 +1112,16 @@ export function BoomerangGenerator() {
                       {element.blur > 0 ? (
                         <path
                           d={element.path}
-                          fill="none"
-                          stroke={element.stroke}
-                          strokeWidth={Number(
-                            (element.strokeWidth + element.blur * 1.15).toFixed(2),
-                          )}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
+                          fill={element.stroke}
                           opacity={element.opacity * 0.62}
                           filter="url(#line-blur-preview)"
-                          vectorEffect="non-scaling-stroke"
                           transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
                         />
                       ) : null}
                       <motion.path
                         d={element.path}
-                        fill="none"
-                        stroke={element.stroke}
-                        strokeWidth={Number(element.strokeWidth.toFixed(2))}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                        fill={element.stroke}
                         opacity={element.opacity}
-                        vectorEffect="non-scaling-stroke"
                         transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
                         initial={{ opacity: 0 }}
                         animate={{ opacity: element.opacity }}
@@ -912,39 +1133,76 @@ export function BoomerangGenerator() {
               </svg>
             </motion.div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={syncToFigma}
-                disabled={figmaStatus === "Preparing"}
-                className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#0b8f8f] px-5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <PenTool size={16} />
-                {figmaStatus === "Preparing" ? "Sync..." : "Figma"}
-              </button>
-              <button
-                type="button"
-                onClick={randomizeDesign}
-                className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white px-5 text-sm font-semibold shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-              >
-                <Shuffle size={16} />
-                Náhodný design
-              </button>
-              <button
-                type="button"
-                onClick={saveToGallery}
-                className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#191716] px-5 text-sm font-semibold text-white shadow-lg shadow-black/15 transition hover:-translate-y-0.5 hover:bg-[#2b2722]"
-              >
-                <Save size={16} />
-                Uložiť do galérie
-              </button>
+            {/* Canvas action row */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {/* Undo / Redo */}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={undo}
+                  className="flex h-9 items-center gap-1.5 rounded-2xl border border-black/10 bg-white px-3 text-xs font-semibold text-[#6b675e] shadow-sm transition hover:-translate-y-0.5"
+                  title="Späť (Ctrl+Z)"
+                  aria-label="Undo"
+                >
+                  <RotateCcw size={13} />
+                  Späť
+                </button>
+                <button
+                  type="button"
+                  onClick={redo}
+                  className="flex h-9 items-center gap-1.5 rounded-2xl border border-black/10 bg-white px-3 text-xs font-semibold text-[#6b675e] shadow-sm transition hover:-translate-y-0.5"
+                  title="Vpred (Ctrl+Shift+Z)"
+                  aria-label="Redo"
+                >
+                  <RotateCw size={13} />
+                  Vpred
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Share URL */}
+                <button
+                  type="button"
+                  onClick={copyShareUrl}
+                  className="flex h-9 items-center gap-1.5 rounded-2xl border border-black/10 bg-white px-3 text-xs font-semibold text-[#6b675e] shadow-sm transition hover:-translate-y-0.5"
+                  title="Kopírovať link"
+                >
+                  {urlCopied ? <ClipboardCheck size={13} /> : <Clipboard size={13} />}
+                  {urlCopied ? "Skopírované!" : "Zdieľať"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={syncToFigma}
+                  disabled={figmaStatus === "Preparing"}
+                  className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#0b8f8f] px-5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <PenTool size={16} />
+                  {figmaStatus === "Preparing" ? "Sync..." : "Figma"}
+                </button>
+                <button
+                  type="button"
+                  onClick={randomizeDesign}
+                  className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white px-5 text-sm font-semibold shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  <Shuffle size={16} />
+                  Náhodný design
+                </button>
+                <button
+                  type="button"
+                  onClick={saveToGallery}
+                  className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#191716] px-5 text-sm font-semibold text-white shadow-lg shadow-black/15 transition hover:-translate-y-0.5 hover:bg-[#2b2722]"
+                >
+                  <Save size={16} />
+                  Uložiť do galérie
+                </button>
+              </div>
             </div>
 
+            {/* Gallery */}
             <section className="rounded-[28px] border border-white/70 bg-white/45 p-4 shadow-sm backdrop-blur-xl">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold tracking-normal">
-                  Galéria
-                </h2>
+                <h2 className="text-lg font-semibold tracking-normal">Galéria</h2>
                 {savedGallery.length > 0 ? (
                   <button
                     type="button"
