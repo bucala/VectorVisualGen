@@ -230,131 +230,127 @@ function sampleBounds(layer: BoomerangLayerSettings): SampleBounds {
   };
 }
 
+// Properly designed retro boomerang templates.
+// Each template: 10 points — outer arc (left-tip → apex → right-tip) followed by
+// inner arc (right-tip → apex → left-tip, reversed to close the shape).
+// Arm width is uniform (~20 units) and y-values are monotone from tips to apex.
+const BUILT_IN_TEMPLATES: Point[][] = [
+  // 1. Classic symmetric V (~90° V-angle)
+  [
+    { x: -110, y: 8 },   { x: -65, y: -52 },  { x: 0, y: -72 },
+    { x: 65, y: -52 },   { x: 110, y: 8 },
+    { x: 98, y: 24 },    { x: 53, y: -36 },   { x: 0, y: -52 },
+    { x: -53, y: -36 },  { x: -98, y: 24 },
+  ],
+  // 2. Wide shallow V (~120° V-angle)
+  [
+    { x: -112, y: 16 },  { x: -68, y: -36 },  { x: 0, y: -52 },
+    { x: 68, y: -36 },   { x: 112, y: 16 },
+    { x: 102, y: 33 },   { x: 58, y: -19 },   { x: 0, y: -32 },
+    { x: -58, y: -19 },  { x: -102, y: 33 },
+  ],
+  // 3. Tight acute V (~65° V-angle)
+  [
+    { x: -108, y: 4 },   { x: -50, y: -56 },  { x: 0, y: -82 },
+    { x: 50, y: -56 },   { x: 108, y: 4 },
+    { x: 96, y: 20 },    { x: 38, y: -40 },   { x: 0, y: -62 },
+    { x: -38, y: -40 },  { x: -96, y: 20 },
+  ],
+  // 4. Asymmetric V (left arm slightly shorter)
+  [
+    { x: -106, y: 10 },  { x: -70, y: -50 },  { x: -4, y: -74 },
+    { x: 66, y: -52 },   { x: 112, y: 8 },
+    { x: 100, y: 24 },   { x: 54, y: -36 },   { x: -4, y: -54 },
+    { x: -57, y: -35 },  { x: -89, y: 20 },
+  ],
+  // 5. Organic V (gently curved arms, slight asymmetry)
+  [
+    { x: -108, y: 8 },   { x: -80, y: -30 },  { x: -10, y: -74 },
+    { x: 60, y: -50 },   { x: 110, y: 10 },
+    { x: 99, y: 26 },    { x: 49, y: -34 },   { x: -7, y: -54 },
+    { x: -67, y: -15 },  { x: -92, y: 20 },
+  ],
+];
+
+// Scale inner arc points of a 10-point template by armFactor.
+// Preserves outer arc points exactly. For custom or non-10-point templates, returns as-is.
+function applyArmFactor(template: Point[], armFactor: number): Point[] {
+  if (template.length !== 10 || Math.abs(armFactor - 1.0) < 0.01) return template;
+  const outer = template.slice(0, 5);
+  const inner = template.slice(5);
+  const scaledInner = inner.map((ip, i) => {
+    const op = outer[4 - i]; // reversed: inner[0]↔outer[4], inner[4]↔outer[0]
+    const dx = ip.x - op.x;
+    const dy = ip.y - op.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.01) return ip;
+    const newDist = clamp(dist * armFactor, 2, 60);
+    return { x: op.x + (dx / dist) * newDist, y: op.y + (dy / dist) * newDist };
+  });
+  return [...outer, ...scaledInner];
+}
+
+// One pass of Laplacian smoothing (closed ring, no endpoint pinning).
+function laplacianSmooth(points: Point[], alpha: number): Point[] {
+  const n = points.length;
+  return points.map((p, i) => {
+    const prev = points[(i - 1 + n) % n];
+    const next = points[(i + 1) % n];
+    return {
+      x: p.x * (1 - alpha) + (prev.x + next.x) / 2 * alpha,
+      y: p.y * (1 - alpha) + (prev.y + next.y) / 2 * alpha,
+    };
+  });
+}
+
 function createClosedBoomerangPath(
   random: () => number,
   chaos: number,
   index: number,
   customTemplates?: Point[][],
+  armFactor = 1.0,
 ) {
-  const builtInTemplates: Point[][] = [
-    // Classic symmetric boomerang: outer arc (tip→arm→bend→arm→tip) then inner arc
-    [
-      { x: -110, y: 10 },
-      { x: -70, y: -46 },
-      { x: -4, y: -28 },
-      { x: 70, y: -46 },
-      { x: 110, y: 10 },
-      { x: 86, y: 34 },
-      { x: 46, y: 12 },
-      { x: -2, y: 4 },
-      { x: -44, y: 12 },
-      { x: -88, y: 34 },
-    ],
-    // Asymmetric: slightly offset bend
-    [
-      { x: -106, y: 14 },
-      { x: -68, y: -50 },
-      { x: -4, y: -32 },
-      { x: 64, y: -52 },
-      { x: 112, y: 6 },
-      { x: 88, y: 30 },
-      { x: 46, y: 10 },
-      { x: -6, y: 2 },
-      { x: -48, y: 14 },
-      { x: -86, y: 38 },
-    ],
-    // Tighter bend — more acute V angle
-    [
-      { x: -108, y: 6 },
-      { x: -60, y: -54 },
-      { x: 0, y: -18 },
-      { x: 60, y: -54 },
-      { x: 108, y: 6 },
-      { x: 84, y: 30 },
-      { x: 42, y: 6 },
-      { x: 0, y: 10 },
-      { x: -40, y: 8 },
-      { x: -84, y: 32 },
-    ],
-    // Organic: one arm curves higher
-    [
-      { x: -112, y: 4 },
-      { x: -74, y: -56 },
-      { x: -8, y: -38 },
-      { x: 60, y: -44 },
-      { x: 110, y: 14 },
-      { x: 84, y: 38 },
-      { x: 40, y: 18 },
-      { x: -10, y: 6 },
-      { x: -52, y: 16 },
-      { x: -90, y: 36 },
-    ],
-    // Wide/flat boomerang
-    [
-      { x: -110, y: 16 },
-      { x: -64, y: -42 },
-      { x: 2, y: -22 },
-      { x: 66, y: -42 },
-      { x: 110, y: 16 },
-      { x: 88, y: 40 },
-      { x: 52, y: 22 },
-      { x: 0, y: 12 },
-      { x: -50, y: 20 },
-      { x: -90, y: 40 },
-    ],
-  ];
-  const templates = customTemplates && customTemplates.length > 0 ? customTemplates : builtInTemplates;
-  const template = templates[index % templates.length];
-  const perturb = 0.04 + chaos * 0.12;
-  const stretchX = 0.92 + random() * (0.18 + chaos * 0.18);
-  const stretchY = 0.78 + random() * (0.18 + chaos * 0.14);
-  const points = template.map((point, pointIndex) => {
-    const anchorWeight = pointIndex === 0 ? 0.55 : 1;
+  const templates =
+    customTemplates && customTemplates.length > 0 ? customTemplates : BUILT_IN_TEMPLATES;
+  const rawTemplate = templates[index % templates.length];
+  // Apply arm width scaling only for built-in templates (10-point)
+  const scaledTemplate =
+    customTemplates && customTemplates.length > 0
+      ? rawTemplate
+      : applyArmFactor(rawTemplate, armFactor);
 
+  const perturb = 0.04 + chaos * 0.10;
+  const stretchX = 0.92 + random() * (0.16 + chaos * 0.16);
+  const stretchY = 0.80 + random() * (0.14 + chaos * 0.12);
+
+  let points = scaledTemplate.map((pt) => ({
+    x: pt.x * stretchX * (0.98 + random() * (0.04 + chaos * 0.06)) + jitter(random, 14 * perturb),
+    y: pt.y * stretchY * (0.98 + random() * (0.04 + chaos * 0.06)) + jitter(random, 14 * perturb),
+  }));
+
+  // Two Laplacian smoothing passes for organic curves
+  points = laplacianSmooth(points, 0.30);
+  points = laplacianSmooth(points, 0.20);
+
+  // Catmull-Rom → cubic bezier with higher tension for smooth results
+  const controls = points.map((point, i) => {
+    const prev = points[(i - 1 + points.length) % points.length];
+    const next = points[(i + 1) % points.length];
+    const tension = 0.30 + random() * (0.06 + chaos * 0.06);
     return {
-      x:
-        point.x * stretchX * (0.98 + random() * (0.04 + chaos * 0.07)) +
-        jitter(random, 18 * perturb) * anchorWeight,
-      y:
-        point.y *
-          stretchY *
-          (0.98 + random() * (0.04 + chaos * 0.08)) +
-        jitter(random, 18 * perturb) * anchorWeight,
+      in:  { x: point.x - (next.x - prev.x) * tension, y: point.y - (next.y - prev.y) * tension },
+      out: { x: point.x + (next.x - prev.x) * tension, y: point.y + (next.y - prev.y) * tension },
     };
   });
-  const controls = points.map((point, pointIndex) => {
-    const previous = points[(pointIndex - 1 + points.length) % points.length];
-    const next = points[(pointIndex + 1) % points.length];
-    const tension = 0.20 + random() * (0.06 + chaos * 0.06);
 
-    return {
-      in: {
-        x: point.x - (next.x - previous.x) * tension,
-        y: point.y - (next.y - previous.y) * tension,
-      },
-      out: {
-        x: point.x + (next.x - previous.x) * tension,
-        y: point.y + (next.y - previous.y) * tension,
-      },
-    };
-  });
   const commands = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
-
-  for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
-    const nextIndex = (pointIndex + 1) % points.length;
-    const currentControl = controls[pointIndex].out;
-    const nextControl = controls[nextIndex].in;
-    const next = points[nextIndex];
-
-    commands.push(
-      `C ${currentControl.x.toFixed(2)} ${currentControl.y.toFixed(
-        2,
-      )} ${nextControl.x.toFixed(2)} ${nextControl.y.toFixed(
-        2,
-      )} ${next.x.toFixed(2)} ${next.y.toFixed(2)}`,
-    );
+  for (let i = 0; i < points.length; i++) {
+    const ni = (i + 1) % points.length;
+    const c1 = controls[i].out;
+    const c2 = controls[ni].in;
+    const p2 = points[ni];
+    commands.push(`C ${c1.x.toFixed(2)} ${c1.y.toFixed(2)} ${c2.x.toFixed(2)} ${c2.y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`);
   }
-
   commands.push("Z");
   return commands.join(" ");
 }
@@ -440,6 +436,8 @@ export function generateBoomerangElements(
   const elements: BoomerangElement[] = [];
   const defaultCount = Math.round(32 + settings.density * 0.78);
   const blur = (settings.blur / 100) * 12;
+  // strokeWidth slider maps to arm thickness factor: default 1.4 → armFactor 1.0
+  const armFactor = clamp(settings.strokeWidth / 1.4, 0.2, 3.0);
 
   settings.layers
     .slice()
@@ -461,7 +459,9 @@ export function generateBoomerangElements(
 
         elements.push({
           id: `${layer.id}-boomerang-${index}`,
-          path: createClosedBoomerangPath(random, chaos, index + layerIndex * 17, templates),
+          path: createClosedBoomerangPath(
+            random, chaos, index + layerIndex * 17, templates, armFactor,
+          ),
           x: point.x,
           y: point.y,
           scale: localScale,
@@ -511,6 +511,7 @@ export function generateBoomerangElementsFromTrace(
 ): BoomerangElement[] {
   const elements: BoomerangElement[] = [];
   const blur = (settings.blur / 100) * 12;
+  const armFactor = clamp(settings.strokeWidth / 1.4, 0.2, 3.0);
 
   const topLayer = layerSettingsFor(settings, "top");
   const topLayerIndex = layerIndexFor("top");
@@ -522,7 +523,7 @@ export function generateBoomerangElementsFromTrace(
     const sf = parseScaleFactor(shape.transform);
     const centroid = extractShapeCentroid(shape.d, sf);
     const r = mulberry32(settings.seed + index * 7919 + 312701);
-    const path = createClosedBoomerangPath(r, topChaos, index, topTemplates);
+    const path = createClosedBoomerangPath(r, topChaos, index, topTemplates, armFactor);
     const localScale = topVisualScale * (0.72 + r() * (0.16 + topChaos * 0.34));
     const rotation = settings.rotation + r() * 360;
     const strokeWidth = settings.strokeWidth * (0.72 + r() * (0.05 + topChaos * 0.24));
@@ -564,7 +565,7 @@ export function generateBoomerangElementsFromTrace(
 
       elements.push({
         id: `${layerId}-boomerang-${ptIndex}`,
-        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17, templates),
+        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17, templates, armFactor),
         x: point.x,
         y: point.y,
         scale: localScale,
@@ -609,26 +610,15 @@ function renderGeneratedElementMark(element: BoomerangElement, blur: number) {
   )}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(
     3,
   )})`;
+  // Use filled shapes for the authentic retro boomerang silhouette
   const blurMark =
     blur > 0
       ? `
-    <path d="${element.path}" transform="${transform}" fill="none" stroke="${
-          element.stroke
-        }" stroke-width="${(element.strokeWidth + blur * 1.15).toFixed(
-          2,
-        )}" stroke-linecap="round" stroke-linejoin="round" opacity="${(
-          element.opacity * 0.62
-        ).toFixed(2)}" filter="url(#line-blur)" vector-effect="non-scaling-stroke" />`
+    <path d="${element.path}" transform="${transform}" fill="${element.stroke}" opacity="${(element.opacity * 0.62).toFixed(2)}" filter="url(#line-blur)" />`
       : "";
 
   return `${blurMark}
-    <path d="${element.path}" transform="${transform}" fill="none" stroke="${
-      element.stroke
-    }" stroke-width="${element.strokeWidth.toFixed(
-      2,
-    )}" stroke-linecap="round" stroke-linejoin="round" opacity="${element.opacity.toFixed(
-      2,
-    )}" vector-effect="non-scaling-stroke" />`;
+    <path d="${element.path}" transform="${transform}" fill="${element.stroke}" opacity="${element.opacity.toFixed(2)}" />`;
 }
 
 function renderLayerGroup(
@@ -671,6 +661,45 @@ export function createBoomerangSvg(
   const groups = renderLayerGroups(settings, elements, blur);
 
   return svgDocument(settings, filterDef, groups, true);
+}
+
+export function createBoomerangSvgAnimated(
+  settings: BoomerangSettings,
+  detectedShapes: DetectedVectorShape[] = [],
+  layerOverrides?: LayerOverrides,
+): string {
+  const blur = (settings.blur / 100) * 12;
+  const filterDef = blurFilterDef(blur);
+  const elements =
+    detectedShapes.length > 0
+      ? generateBoomerangElementsFromTrace(settings, detectedShapes, layerOverrides)
+      : generateBoomerangElements(settings, layerOverrides);
+
+  const totalDuration = 3.0;
+  const total = elements.length || 1;
+
+  const layerContent = LAYER_ORDER.map((layerId) => {
+    const layer = layerSettingsFor(settings, layerId);
+    const label = escapeAttribute(layer.label);
+    const layerElements = elements.filter((e) => e.layerId === layerId);
+    const marks = layerElements.map((element) => {
+      const globalIndex = elements.indexOf(element);
+      const delay = ((globalIndex / total) * totalDuration).toFixed(2);
+      const dur = (totalDuration * 0.5).toFixed(2);
+      const transform = `translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`;
+      const blurMark = blur > 0
+        ? `<path d="${element.path}" transform="${transform}" fill="${element.stroke}" opacity="0" filter="url(#line-blur)"><animate attributeName="opacity" from="0" to="${(element.opacity * 0.62).toFixed(2)}" dur="${dur}s" begin="${delay}s" fill="freeze"/></path>`
+        : "";
+      return `${blurMark}<path d="${element.path}" transform="${transform}" fill="${element.stroke}" opacity="0"><animate attributeName="opacity" from="0" to="${element.opacity.toFixed(2)}" dur="${dur}s" begin="${delay}s" fill="freeze"/></path>`;
+    }).join("");
+    return `<g id="${layerId}-layer" data-layer="${layerId}" inkscape:groupmode="layer" inkscape:label="${label}">${marks}</g>`;
+  }).join("");
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" viewBox="0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}">
+  ${filterDef}
+  <rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" fill="${safeColor(settings.background)}" />
+  ${layerContent}
+</svg>`;
 }
 
 export function createSeparatedLayerSvgs(

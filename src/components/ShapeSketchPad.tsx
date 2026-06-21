@@ -19,8 +19,8 @@ function perpendicularDistance(p: Point, a: Point, b: Point): number {
   return Math.abs(dx * (a.y - p.y) - (a.x - p.x) * dy) / len;
 }
 
-function rdpSimplify(points: Point[], epsilon: number): Point[] {
-  if (points.length <= 2) return points;
+function rdpSimplify(points: Point[], epsilon: number, depth = 0): Point[] {
+  if (points.length <= 2 || depth > 60) return points;
   let maxDist = 0;
   let maxIndex = 0;
   for (let i = 1; i < points.length - 1; i++) {
@@ -31,8 +31,8 @@ function rdpSimplify(points: Point[], epsilon: number): Point[] {
     }
   }
   if (maxDist > epsilon) {
-    const left = rdpSimplify(points.slice(0, maxIndex + 1), epsilon);
-    const right = rdpSimplify(points.slice(maxIndex), epsilon);
+    const left = rdpSimplify(points.slice(0, maxIndex + 1), epsilon, depth + 1);
+    const right = rdpSimplify(points.slice(maxIndex), epsilon, depth + 1);
     return [...left.slice(0, -1), ...right];
   }
   return [points[0], points[points.length - 1]];

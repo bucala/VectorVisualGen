@@ -8,7 +8,9 @@ import {
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 5 * 60_000;
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
+let lastCleanup = Date.now();
 
 function clientKey(request: Request) {
   return (
@@ -21,14 +23,18 @@ function clientKey(request: Request) {
 function rateLimit(request: Request) {
   const now = Date.now();
   const key = clientKey(request);
+
+  // Periodic cleanup to prevent unbounded memory growth
+  if (now - lastCleanup > RATE_LIMIT_CLEANUP_INTERVAL_MS) {
+    for (const [k, v] of rateLimits) {
+      if (v.resetAt <= now) rateLimits.delete(k);
+    }
+    lastCleanup = now;
+  }
+
   const bucket = rateLimits.get(key);
 
   if (!bucket || bucket.resetAt <= now) {
-    if (rateLimits.size > 1000) {
-      for (const [k, v] of rateLimits) {
-        if (v.resetAt <= now) rateLimits.delete(k);
-      }
-    }
     rateLimits.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return null;
   }
@@ -99,12 +105,14 @@ export async function POST(request: Request) {
   const fileKey = process.env.FIGMA_FILE_KEY;
   const nodeId = process.env.FIGMA_NODE_ID;
   const token = process.env.FIGMA_ACCESS_TOKEN;
-  const bridgePayload = createFigmaBridgePayload(parsed.body, {
-    fileKey,
-    nodeId,
-  });
 
+  // Q1: Only include the bridge payload when credentials are not configured.
+  // When fully configured, the Figma plugin reads from the API directly.
   if (!fileKey || !nodeId || !token) {
+    const bridgePayload = createFigmaBridgePayload(parsed.body, {
+      fileKey,
+      nodeId,
+    });
     return NextResponse.json({
       ok: true,
       mode: "bridge-ready",
@@ -138,9 +146,9 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    mode: "bridge-ready",
+    mode: "sync-complete",
     targetVerified: true,
     galleryCount: parsed.body.gallery?.length ?? 0,
-    payload: bridgePayload,
+    // No payload returned here — credentials are fully configured
   });
 }

@@ -91,3 +91,26 @@ test("rejects oversized Figma gallery batches", () => {
   assert.equal(parsed.ok, false);
   if (!parsed.ok) assert.equal(parsed.status, 400);
 });
+
+test("accepts gallery items without svg field (metadata-only sync)", () => {
+  const parsed = parseFigmaSyncBody(
+    JSON.stringify({
+      name: "meta-only",
+      svg: "<svg><path /></svg>",
+      gallery: [
+        { id: "item-1", name: "Pattern 1", createdAt: "2026-06-21T00:00:00.000Z" },
+        { id: "item-2", name: "Pattern 2" },
+        { name: "Pattern 3", createdAt: "2026-06-20T00:00:00.000Z" },
+      ],
+    }),
+  );
+
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) {
+    assert.equal(parsed.body.gallery?.length, 3);
+    assert.equal(parsed.body.gallery?.[0].svg, undefined);
+    assert.equal(parsed.body.gallery?.[1].svg, undefined);
+    assert.equal(parsed.body.gallery?.[0].name, "Pattern 1");
+    assert.equal(parsed.body.gallery?.[0].id, "item-1");
+  }
+});
