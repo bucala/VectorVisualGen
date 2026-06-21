@@ -12,7 +12,7 @@ export type FigmaGalleryItem = {
   id?: string;
   name?: string;
   createdAt?: string;
-  svg: string;
+  svg?: string;
 };
 
 export type ParsedFigmaSyncBody =
@@ -101,40 +101,42 @@ export function parseFigmaSyncBody(raw: string): ParsedFigmaSyncBody {
       }
 
       const itemSvg = item.svg;
-      if (typeof itemSvg !== "string" || itemSvg.trim().length === 0) {
-        return {
-          ok: false,
-          error: `Gallery item ${index + 1} is missing SVG payload.`,
-          status: 400,
-        };
-      }
+      if (itemSvg !== undefined) {
+        if (typeof itemSvg !== "string" || itemSvg.trim().length === 0) {
+          return {
+            ok: false,
+            error: `Gallery item ${index + 1} SVG payload is invalid.`,
+            status: 400,
+          };
+        }
 
-      if (byteLength(itemSvg) > MAX_FIGMA_SVG_BYTES) {
-        return {
-          ok: false,
-          error: `Gallery item ${index + 1} SVG payload is too large.`,
-          status: 413,
-        };
-      }
+        if (byteLength(itemSvg) > MAX_FIGMA_SVG_BYTES) {
+          return {
+            ok: false,
+            error: `Gallery item ${index + 1} SVG payload is too large.`,
+            status: 413,
+          };
+        }
 
-      const normalizedItemSvg = itemSvg.trim().toLowerCase();
-      if (
-        !normalizedItemSvg.startsWith("<svg") ||
-        !normalizedItemSvg.includes("</svg>")
-      ) {
-        return {
-          ok: false,
-          error: `Gallery item ${index + 1} must be a complete SVG.`,
-          status: 400,
-        };
-      }
+        const normalizedItemSvg = itemSvg.trim().toLowerCase();
+        if (
+          !normalizedItemSvg.startsWith("<svg") ||
+          !normalizedItemSvg.includes("</svg>")
+        ) {
+          return {
+            ok: false,
+            error: `Gallery item ${index + 1} must be a complete SVG.`,
+            status: 400,
+          };
+        }
 
-      if (/<\s*(script|foreignobject)\b/i.test(itemSvg)) {
-        return {
-          ok: false,
-          error: `Gallery item ${index + 1} contains unsupported active content.`,
-          status: 400,
-        };
+        if (/<\s*(script|foreignobject)\b/i.test(itemSvg)) {
+          return {
+            ok: false,
+            error: `Gallery item ${index + 1} contains unsupported active content.`,
+            status: 400,
+          };
+        }
       }
 
       normalizedGallery.push({
@@ -144,7 +146,7 @@ export function parseFigmaSyncBody(raw: string): ParsedFigmaSyncBody {
             ? item.name.trim()
             : `gallery-${index + 1}`,
         createdAt: typeof item.createdAt === "string" ? item.createdAt : undefined,
-        svg: itemSvg,
+        svg: typeof itemSvg === "string" ? itemSvg : undefined,
       });
     }
   }
@@ -176,8 +178,8 @@ export function createFigmaBridgePayload(
           id: item.id ?? null,
           name: item.name ?? "gallery-item",
           createdAt: item.createdAt ?? null,
-          bytes: byteLength(item.svg),
-          svg: item.svg,
+          bytes: item.svg ? byteLength(item.svg) : 0,
+          svg: item.svg ?? null,
         })) ?? [],
     },
     target: {
