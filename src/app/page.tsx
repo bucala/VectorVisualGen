@@ -1,5 +1,5 @@
-import { BoomerangGenerator } from "@/components/BoomerangGenerator";
+import { BoomerangGeneratorClient } from "@/components/BoomerangGeneratorClient";
 
 export default function Home() {
-  return <BoomerangGenerator />;
+  return <BoomerangGeneratorClient />;
 }
