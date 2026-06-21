@@ -13,6 +13,9 @@ const rateLimits = new Map<string, { count: number; resetAt: number }>();
 let lastCleanup = Date.now();
 
 function clientKey(request: Request) {
+  // S2: These headers can be spoofed when requests bypass a trusted proxy
+  // (Cloudflare or equivalent). The rate limit is advisory in direct-access
+  // deployments; the isAuthorized() token check is the primary security guard.
   return (
     request.headers.get("cf-connecting-ip") ??
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -60,6 +63,8 @@ function isAuthorized(request: Request) {
 export async function POST(request: Request) {
   const origin = request.headers.get("origin");
   const host = request.headers.get("host");
+  // S3: Requests without an Origin header (server-to-server, Figma plugin) skip
+  // the CORS check by design — they are protected solely by isAuthorized() below.
   if (origin && host) {
     try {
       if (new URL(origin).host !== host) {

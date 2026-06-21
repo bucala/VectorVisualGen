@@ -39,6 +39,7 @@ function rdpSimplify(points: Point[], epsilon: number, depth = 0): Point[] {
 }
 
 function normalizeToTemplateSpace(points: Point[]): Point[] {
+  if (points.length === 0) return points; // B3: guard empty array
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
   const minX = Math.min(...xs);
@@ -50,6 +51,7 @@ function normalizeToTemplateSpace(points: Point[]): Point[] {
   const halfW = (maxX - minX) / 2 || 1;
   const halfH = (maxY - minY) / 2 || 1;
   const scale = Math.min(110 / halfW, 65 / halfH);
+  if (!isFinite(scale) || scale <= 0) return points; // B3: guard degenerate scale
   return points.map((p) => ({
     x: (p.x - cx) * scale,
     y: (p.y - cy) * scale,
