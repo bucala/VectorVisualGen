@@ -230,114 +230,78 @@ function sampleBounds(layer: BoomerangLayerSettings): SampleBounds {
   };
 }
 
-// Retro boomerang templates with tapered tips for authentic silhouette.
-// Each template: 10 points — outer arc (left-tip → apex → right-tip) followed by
-// inner arc (right-tip → apex → left-tip, reversed to close the shape).
-// Tip arm width ≈ 4 units (narrow), elbow arm width ≈ 16–18 units (widest).
-const BUILT_IN_TEMPLATES: Point[][] = [
-  // 1. Classic symmetric V (~90°) — tapered tips
-  [
-    { x: -112, y: 6 },   { x: -66, y: -52 },  { x: 0, y: -72 },
-    { x: 66, y: -52 },   { x: 112, y: 6 },
-    { x: 112, y: 2 },    { x: 54, y: -40 },   { x: 0, y: -54 },
-    { x: -54, y: -40 },  { x: -112, y: 2 },
-  ],
-  // 2. Wide shallow V (~130°) — near-flat check mark silhouette
-  [
-    { x: -118, y: 10 },  { x: -72, y: -30 },  { x: 0, y: -46 },
-    { x: 72, y: -30 },   { x: 118, y: 10 },
-    { x: 118, y: 6 },    { x: 60, y: -18 },   { x: 0, y: -30 },
-    { x: -60, y: -18 },  { x: -118, y: 6 },
-  ],
-  // 3. Deep narrow V (~55°) — elongated tick shape
-  [
-    { x: -108, y: 4 },   { x: -46, y: -64 },  { x: 0, y: -88 },
-    { x: 46, y: -64 },   { x: 108, y: 4 },
-    { x: 108, y: 0 },    { x: 34, y: -50 },   { x: 0, y: -70 },
-    { x: -34, y: -50 },  { x: -108, y: 0 },
-  ],
-  // 4. Asymmetric V — one arm notably longer than the other
-  [
-    { x: -60, y: 8 },    { x: -30, y: -46 },  { x: 0, y: -72 },
-    { x: 76, y: -52 },   { x: 124, y: 6 },
-    { x: 124, y: 2 },    { x: 64, y: -40 },   { x: 0, y: -56 },
-    { x: -22, y: -34 },  { x: -60, y: 4 },
-  ],
-  // 5. Organic V — gently curved arms, slight asymmetry
-  [
-    { x: -110, y: 8 },   { x: -82, y: -30 },  { x: -10, y: -74 },
-    { x: 60, y: -50 },   { x: 112, y: 8 },
-    { x: 112, y: 4 },    { x: 50, y: -38 },   { x: -8, y: -57 },
-    { x: -70, y: -18 },  { x: -108, y: 5 },
-  ],
+// ─── Boomerang shape model ───────────────────────────────────────────────────
+//
+// Each shape is a closed 3-arc cubic Bezier loop with three anchor points:
+//
+//   tipL  (-spread, tipY)   ← left arm tip  (pointed corner)
+//   apex  ( asymX, -height) ← top vertex / elbow
+//   tipR  (+spread, tipY)   ← right arm tip (pointed corner)
+//
+// Three arcs connect them in order: tipL→apex (left arm), apex→tipR (right arm),
+// tipR→tipL (base). All three arcs bow away from the V interior using the same
+// right-hand-perpendicular formula, so bowing direction is consistent regardless
+// of each arc's orientation.
+//
+// Template parameters:
+//   spread  — half-width of the V (x distance from centre to tip)
+//   height  — apex elevation above the tips baseline
+//   armBow  — convexity of the left and right arms [0=straight, ~0.5=classic bend]
+//   baseBow — downward sag of the closing base arc [0=flat, ~0.25=gentle arch]
+
+export type BoomerangShape = {
+  spread:  number;
+  height:  number;
+  armBow:  number;
+  baseBow: number;
+};
+
+export const SHAPE_TEMPLATES: BoomerangShape[] = [
+  { spread: 108, height: 75, armBow: 0.38, baseBow: 0.22 }, // classic balanced V
+  { spread: 120, height: 52, armBow: 0.28, baseBow: 0.18 }, // wide shallow
+  { spread:  95, height: 94, armBow: 0.44, baseBow: 0.28 }, // tall narrow
+  { spread: 112, height: 68, armBow: 0.52, baseBow: 0.32 }, // strongly bowed arms
+  { spread: 102, height: 82, armBow: 0.34, baseBow: 0.14 }, // subtle curve
 ];
 
-// Scale inner arc points of a 10-point template by armFactor.
-// Preserves outer arc points exactly. For custom or non-10-point templates, returns as-is.
-function applyArmFactor(template: Point[], armFactor: number): Point[] {
-  if (template.length !== 10 || Math.abs(armFactor - 1.0) < 0.01) return template;
-  const outer = template.slice(0, 5);
-  const inner = template.slice(5);
-  const scaledInner = inner.map((ip, i) => {
-    const op = outer[4 - i]; // reversed: inner[0]↔outer[4], inner[4]↔outer[0]
-    const dx = ip.x - op.x;
-    const dy = ip.y - op.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 0.01) return ip;
-    const newDist = clamp(dist * armFactor, 2, 60);
-    return { x: op.x + (dx / dist) * newDist, y: op.y + (dy / dist) * newDist };
-  });
-  return [...outer, ...scaledInner];
+// Returns Bezier control points for an arc from p0 to p1 that bows outward
+// from the V interior. The right-hand perpendicular of the chord (dy,−dx)/|d|
+// points away from the V centre for every arc in the template.
+function bowedBezierControls(
+  p0: Point, p1: Point, bow: number,
+): { c1: Point; c2: Point } {
+  const dx = p1.x - p0.x, dy = p1.y - p0.y;
+  const L = Math.hypot(dx, dy);
+  if (L < 0.001) return { c1: { ...p0 }, c2: { ...p1 } };
+  const rx = dy / L, ry = -dx / L;       // right-hand unit perpendicular
+  const offset = bow * L * 0.45;         // perpendicular offset ∝ chord length
+  return {
+    c1: { x: p0.x + dx / 3 + rx * offset, y: p0.y + dy / 3 + ry * offset },
+    c2: { x: p1.x - dx / 3 + rx * offset, y: p1.y - dy / 3 + ry * offset },
+  };
 }
 
-// One pass of Laplacian smoothing (closed ring, no endpoint pinning).
-function laplacianSmooth(points: Point[], alpha: number): Point[] {
-  const n = points.length;
-  return points.map((p, i) => {
-    const prev = points[(i - 1 + n) % n];
-    const next = points[(i + 1) % n];
-    return {
-      x: p.x * (1 - alpha) + (prev.x + next.x) / 2 * alpha,
-      y: p.y * (1 - alpha) + (prev.y + next.y) / 2 * alpha,
-    };
-  });
-}
-
-function createClosedBoomerangPath(
+// Catmull-Rom closed spline for user-drawn custom templates (Point[][]).
+function createCatmullRomPath(
   random: () => number,
   chaos: number,
   index: number,
-  customTemplates?: Point[][],
-  armFactor = 1.0,
-) {
-  const templates =
-    customTemplates && customTemplates.length > 0 ? customTemplates : BUILT_IN_TEMPLATES;
-  const rawTemplate = templates[index % templates.length];
-  // Apply arm width scaling only for built-in templates (10-point)
-  const scaledTemplate =
-    customTemplates && customTemplates.length > 0
-      ? rawTemplate
-      : applyArmFactor(rawTemplate, armFactor);
-
+  customTemplates: Point[][],
+): string {
+  const rawTemplate = customTemplates[index % customTemplates.length];
   const perturb = 0.04 + chaos * 0.10;
   const stretchX = 0.92 + random() * (0.16 + chaos * 0.16);
   const stretchY = 0.80 + random() * (0.14 + chaos * 0.12);
 
-  let points = scaledTemplate.map((pt) => ({
+  const points = rawTemplate.map((pt) => ({
     x: pt.x * stretchX * (0.98 + random() * (0.04 + chaos * 0.06)) + jitter(random, 14 * perturb),
     y: pt.y * stretchY * (0.98 + random() * (0.04 + chaos * 0.06)) + jitter(random, 14 * perturb),
   }));
 
-  // Three Laplacian smoothing passes for organic, rounded arms
-  points = laplacianSmooth(points, 0.30);
-  points = laplacianSmooth(points, 0.20);
-  points = laplacianSmooth(points, 0.10);
-
-  // Catmull-Rom → cubic bezier with higher tension for smooth results
+  const tension = 0.40 + random() * (0.06 + chaos * 0.06);
   const controls = points.map((point, i) => {
     const prev = points[(i - 1 + points.length) % points.length];
     const next = points[(i + 1) % points.length];
-    const tension = 0.30 + random() * (0.06 + chaos * 0.06);
     return {
       in:  { x: point.x - (next.x - prev.x) * tension, y: point.y - (next.y - prev.y) * tension },
       out: { x: point.x + (next.x - prev.x) * tension, y: point.y + (next.y - prev.y) * tension },
@@ -347,13 +311,51 @@ function createClosedBoomerangPath(
   const commands = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
   for (let i = 0; i < points.length; i++) {
     const ni = (i + 1) % points.length;
-    const c1 = controls[i].out;
-    const c2 = controls[ni].in;
-    const p2 = points[ni];
-    commands.push(`C ${c1.x.toFixed(2)} ${c1.y.toFixed(2)} ${c2.x.toFixed(2)} ${c2.y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`);
+    commands.push(
+      `C ${controls[i].out.x.toFixed(2)} ${controls[i].out.y.toFixed(2)} ${controls[ni].in.x.toFixed(2)} ${controls[ni].in.y.toFixed(2)} ${points[ni].x.toFixed(2)} ${points[ni].y.toFixed(2)}`
+    );
   }
   commands.push("Z");
   return commands.join(" ");
+}
+
+function createClosedBoomerangPath(
+  random: () => number,
+  chaos: number,
+  index: number,
+  customTemplates?: Point[][],
+): string {
+  if (customTemplates && customTemplates.length > 0) {
+    return createCatmullRomPath(random, chaos, index, customTemplates);
+  }
+
+  const tmpl = SHAPE_TEMPLATES[index % SHAPE_TEMPLATES.length];
+
+  // Perturb template parameters for per-element variety
+  const spread  = tmpl.spread  * (0.88 + random() * (0.24 + chaos * 0.18));
+  const height  = tmpl.height  * (0.88 + random() * (0.24 + chaos * 0.18));
+  const armBow  = tmpl.armBow  * (0.72 + random() * (0.56 + chaos * 0.38));
+  const baseBow = tmpl.baseBow * (0.60 + random() * (0.80 + chaos * 0.46));
+  // Slight apex asymmetry so no two boomerangs look identical
+  const asymX = jitter(random, 8 + chaos * 14);
+  const asymY = jitter(random, 4 + chaos * 8);
+
+  const tipL: Point = { x: -spread, y: 10 };
+  const apex: Point = { x: asymX,   y: -height + asymY };
+  const tipR: Point = { x:  spread, y: 10 };
+
+  const la = bowedBezierControls(tipL, apex, armBow);   // left arm
+  const ra = bowedBezierControls(apex, tipR, armBow);   // right arm
+  const ba = bowedBezierControls(tipR, tipL, baseBow);  // base arc
+
+  const f = (n: number) => n.toFixed(2);
+  return [
+    `M ${f(tipL.x)} ${f(tipL.y)}`,
+    `C ${f(la.c1.x)} ${f(la.c1.y)} ${f(la.c2.x)} ${f(la.c2.y)} ${f(apex.x)} ${f(apex.y)}`,
+    `C ${f(ra.c1.x)} ${f(ra.c1.y)} ${f(ra.c2.x)} ${f(ra.c2.y)} ${f(tipR.x)} ${f(tipR.y)}`,
+    `C ${f(ba.c1.x)} ${f(ba.c1.y)} ${f(ba.c2.x)} ${f(ba.c2.y)} ${f(tipL.x)} ${f(tipL.y)}`,
+    "Z",
+  ].join(" ");
 }
 
 function jitteredGridFallback(
@@ -437,8 +439,6 @@ export function generateBoomerangElements(
   const elements: BoomerangElement[] = [];
   const defaultCount = Math.round(32 + settings.density * 0.78);
   const blur = (settings.blur / 100) * 12;
-  // strokeWidth slider maps to arm thickness factor: default 1.4 → armFactor 1.0
-  const armFactor = clamp(settings.strokeWidth / 1.4, 0.2, 3.0);
 
   settings.layers
     .slice()
@@ -461,7 +461,7 @@ export function generateBoomerangElements(
         elements.push({
           id: `${layer.id}-boomerang-${index}`,
           path: createClosedBoomerangPath(
-            random, chaos, index + layerIndex * 17, templates, armFactor,
+            random, chaos, index + layerIndex * 17, templates,
           ),
           x: point.x,
           y: point.y,
@@ -512,7 +512,6 @@ export function generateBoomerangElementsFromTrace(
 ): BoomerangElement[] {
   const elements: BoomerangElement[] = [];
   const blur = (settings.blur / 100) * 12;
-  const armFactor = clamp(settings.strokeWidth / 1.4, 0.2, 3.0);
 
   const topLayer = layerSettingsFor(settings, "top");
   const topLayerIndex = layerIndexFor("top");
@@ -524,7 +523,7 @@ export function generateBoomerangElementsFromTrace(
     const sf = parseScaleFactor(shape.transform);
     const centroid = extractShapeCentroid(shape.d, sf);
     const r = mulberry32(settings.seed + index * 7919 + 312701);
-    const path = createClosedBoomerangPath(r, topChaos, index, topTemplates, armFactor);
+    const path = createClosedBoomerangPath(r, topChaos, index, topTemplates);
     const localScale = topVisualScale * (0.72 + r() * (0.16 + topChaos * 0.34));
     const rotation = settings.rotation + r() * 360;
     const strokeWidth = settings.strokeWidth * (0.72 + r() * (0.05 + topChaos * 0.24));
@@ -566,7 +565,7 @@ export function generateBoomerangElementsFromTrace(
 
       elements.push({
         id: `${layerId}-boomerang-${ptIndex}`,
-        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17, templates, armFactor),
+        path: createClosedBoomerangPath(random, chaos, ptIndex + layerIndex * 17, templates),
         x: point.x,
         y: point.y,
         scale: localScale,
@@ -611,15 +610,16 @@ function renderGeneratedElementMark(element: BoomerangElement, blur: number) {
   )}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(
     3,
   )})`;
-  // Use filled shapes for the authentic retro boomerang silhouette
+  const sw = (element.strokeWidth * 5).toFixed(1);
+  const strokeAttrs = `stroke="${element.stroke}" stroke-width="${sw}" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
   const blurMark =
     blur > 0
       ? `
-    <path d="${element.path}" transform="${transform}" fill="${element.stroke}" opacity="${(element.opacity * 0.62).toFixed(2)}" filter="url(#line-blur)" />`
+    <path d="${element.path}" transform="${transform}" ${strokeAttrs} opacity="${(element.opacity * 0.62).toFixed(2)}" filter="url(#line-blur)" />`
       : "";
 
   return `${blurMark}
-    <path d="${element.path}" transform="${transform}" fill="${element.stroke}" opacity="${element.opacity.toFixed(2)}" />`;
+    <path d="${element.path}" transform="${transform}" ${strokeAttrs} opacity="${element.opacity.toFixed(2)}" />`;
 }
 
 function renderLayerGroup(
@@ -688,10 +688,12 @@ export function createBoomerangSvgAnimated(
       const delay = ((globalIndex / total) * totalDuration).toFixed(2);
       const dur = (totalDuration * 0.5).toFixed(2);
       const transform = `translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`;
+      const sw = (element.strokeWidth * 5).toFixed(1);
+      const strokeAttrs = `stroke="${element.stroke}" stroke-width="${sw}" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
       const blurMark = blur > 0
-        ? `<path d="${element.path}" transform="${transform}" fill="${element.stroke}" opacity="0" filter="url(#line-blur)"><animate attributeName="opacity" from="0" to="${(element.opacity * 0.62).toFixed(2)}" dur="${dur}s" begin="${delay}s" fill="freeze"/></path>`
+        ? `<path d="${element.path}" transform="${transform}" ${strokeAttrs} opacity="0" filter="url(#line-blur)"><animate attributeName="opacity" from="0" to="${(element.opacity * 0.62).toFixed(2)}" dur="${dur}s" begin="${delay}s" fill="freeze"/></path>`
         : "";
-      return `${blurMark}<path d="${element.path}" transform="${transform}" fill="${element.stroke}" opacity="0"><animate attributeName="opacity" from="0" to="${element.opacity.toFixed(2)}" dur="${dur}s" begin="${delay}s" fill="freeze"/></path>`;
+      return `${blurMark}<path d="${element.path}" transform="${transform}" ${strokeAttrs} opacity="0"><animate attributeName="opacity" from="0" to="${element.opacity.toFixed(2)}" dur="${dur}s" begin="${delay}s" fill="freeze"/></path>`;
     }).join("");
     return `<g id="${layerId}-layer" data-layer="${layerId}" inkscape:groupmode="layer" inkscape:label="${label}">${marks}</g>`;
   }).join("");
