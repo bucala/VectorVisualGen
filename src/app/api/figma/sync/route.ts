@@ -52,6 +52,24 @@ function isAuthorized(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const origin = request.headers.get("origin");
+  const host = request.headers.get("host");
+  if (origin && host) {
+    try {
+      if (new URL(origin).host !== host) {
+        return NextResponse.json(
+          { ok: false, error: "Cross-origin request rejected." },
+          { status: 403 },
+        );
+      }
+    } catch {
+      return NextResponse.json(
+        { ok: false, error: "Invalid request origin." },
+        { status: 400 },
+      );
+    }
+  }
+
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > MAX_FIGMA_JSON_BYTES) {
     return NextResponse.json(
