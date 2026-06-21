@@ -63,6 +63,46 @@ const numericControls: NumericControl[] = [
 const MAX_GALLERY_ITEMS = 12;
 const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
 const GALLERY_STORAGE_KEY = "vectorvisualgen.gallery.v1";
+const SETTINGS_STORAGE_KEY = "vectorvisualgen.settings.v1";
+
+function hslToHex(h: number, s: number, l: number) {
+  const sl = s / 100;
+  const ll = l / 100;
+  const a = sl * Math.min(ll, 1 - ll);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = ll - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function buildRandomSettings(current: BoomerangSettings): BoomerangSettings {
+  const baseHue = Math.random() * 360;
+  const bgL = 4 + Math.random() * 8;
+  const background = hslToHex(baseHue, 20 + Math.random() * 30, bgL);
+  const hues = [
+    baseHue,
+    (baseHue + 150 + Math.random() * 60) % 360,
+    (baseHue + 30 + Math.random() * 40) % 360,
+  ];
+  return {
+    ...current,
+    seed: crypto.getRandomValues(new Uint32Array(1))[0] % 100000,
+    density: Math.round(80 + Math.random() * 160),
+    strokeWidth: parseFloat((0.6 + Math.random() * 2.0).toFixed(1)),
+    blur: Math.random() < 0.3 ? Math.round(Math.random() * 60) : 0,
+    rotation: Math.round(-60 + Math.random() * 120),
+    background,
+    layers: current.layers.map((layer, index) => ({
+      ...layer,
+      color: hslToHex(hues[index], 55 + Math.random() * 35, 45 + Math.random() * 30),
+      scale: parseFloat((0.8 + Math.random() * 2.0).toFixed(2)),
+      chaos: Math.round(Math.random() * 80),
+      opacity: parseFloat((0.3 + Math.random() * 0.65).toFixed(2)),
+    })),
+  };
+}
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
@@ -103,6 +143,10 @@ export function BoomerangGenerator() {
   >({ bottom: { shapes: [], count: 0 }, middle: { shapes: [], count: 0 }, top: { shapes: [], count: 0 } });
   const [activeSketchLayer, setActiveSketchLayer] = useState<LayerId>("bottom");
   const svgRef = useRef<SVGSVGElement>(null);
+  const undoStack = useRef<BoomerangSettings[]>([]);
+  const redoStack = useRef<BoomerangSettings[]>([]);
+  const figmaInFlight = useRef(false);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
   const layerOverrides = useMemo<LayerOverrides>(() => {
     const out: LayerOverrides = {};
     for (const id of LAYER_ORDER) {
@@ -164,14 +208,81 @@ export function BoomerangGenerator() {
         GALLERY_STORAGE_KEY,
         JSON.stringify(savedGallery),
       );
-    } catch {}
+    } catch (error) {
+      console.error("Failed to save gallery:", error);
+    }
   }, [galleryHydrated, savedGallery]);
+
+  useEffect(() => {
+    window.queueMicrotask(() => {
+      try {
+        const stored = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored) as Partial<BoomerangSettings>;
+          if (
+            parsed &&
+            typeof parsed.density === "number" &&
+            Array.isArray(parsed.layers) &&
+            parsed.layers.length === 3
+          ) {
+            setSettings({ ...DEFAULT_BOOMERANG_SETTINGS, ...parsed });
+          }
+        }
+      } catch {}
+      setSettingsHydrated(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    try {
+      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch (error) {
+      console.error("Failed to auto-save settings:", error);
+    }
+  }, [settingsHydrated, settings]);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (!ctrl) return;
+      if (e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        const prev = undoStack.current.pop();
+        if (prev) {
+          setSettings((cur) => {
+            redoStack.current = [...redoStack.current, cur].slice(-20);
+            return prev;
+          });
+        }
+      } else if (e.key === "y" || (e.key === "z" && e.shiftKey)) {
+        e.preventDefault();
+        const next = redoStack.current.pop();
+        if (next) {
+          setSettings((cur) => {
+            undoStack.current = [...undoStack.current, cur].slice(-20);
+            return next;
+          });
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  function withHistory(updater: (prev: BoomerangSettings) => BoomerangSettings) {
+    setSettings((prev) => {
+      undoStack.current = [...undoStack.current, prev].slice(-20);
+      redoStack.current = [];
+      return updater(prev);
+    });
+  }
 
   function updateSetting<Key extends keyof BoomerangSettings>(
     key: Key,
     value: BoomerangSettings[Key],
   ) {
-    setSettings((current) => ({ ...current, [key]: value }));
+    withHistory((current) => ({ ...current, [key]: value }));
   }
 
   function updateLayer<Key extends "color" | "scale" | "chaos" | "opacity">(
@@ -179,7 +290,7 @@ export function BoomerangGenerator() {
     key: Key,
     value: BoomerangSettings["layers"][number][Key],
   ) {
-    setSettings((current) => ({
+    withHistory((current) => ({
       ...current,
       layers: current.layers.map((layer) =>
         layer.id === layerId ? { ...layer, [key]: value } : layer,
@@ -188,7 +299,7 @@ export function BoomerangGenerator() {
   }
 
   function applyPreset(preset: (typeof COLOR_PRESETS)[number]) {
-    setSettings((current) => ({
+    withHistory((current) => ({
       ...current,
       background: preset.background,
       layers: current.layers.map((layer, index) => ({
@@ -198,54 +309,14 @@ export function BoomerangGenerator() {
     }));
   }
 
-  function hslToHex(h: number, s: number, l: number) {
-    const sl = s / 100;
-    const ll = l / 100;
-    const a = sl * Math.min(ll, 1 - ll);
-    const f = (n: number) => {
-      const k = (n + h / 30) % 12;
-      const color = ll - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-      return Math.round(255 * color).toString(16).padStart(2, "0");
-    };
-    return `#${f(0)}${f(8)}${f(4)}`;
-  }
-
   function randomizeDesign() {
-    const baseHue = Math.random() * 360;
-    const bgL = 4 + Math.random() * 8;
-    const background = hslToHex(baseHue, 20 + Math.random() * 30, bgL);
-    const hues = [
-      baseHue,
-      (baseHue + 150 + Math.random() * 60) % 360,
-      (baseHue + 30 + Math.random() * 40) % 360,
-    ];
-
-    setSettings((current) => ({
-      ...current,
-      seed: Math.floor(Math.random() * 100000),
-      density: Math.round(80 + Math.random() * 160),
-      strokeWidth: parseFloat((0.6 + Math.random() * 2.0).toFixed(1)),
-      blur: Math.random() < 0.3 ? Math.round(Math.random() * 60) : 0,
-      rotation: Math.round(-60 + Math.random() * 120),
-      background,
-      layers: current.layers.map((layer, index) => ({
-        ...layer,
-        color: hslToHex(
-          hues[index],
-          55 + Math.random() * 35,
-          45 + Math.random() * 30,
-        ),
-        scale: parseFloat((0.8 + Math.random() * 2.0).toFixed(2)),
-        chaos: Math.round(Math.random() * 80),
-        opacity: parseFloat((0.3 + Math.random() * 0.65).toFixed(2)),
-      })),
-    }));
+    withHistory(buildRandomSettings);
     setFigmaStatus("Ready");
     setExportStatus("Ready");
   }
 
   function resetDefault() {
-    setSettings(DEFAULT_BOOMERANG_SETTINGS);
+    withHistory(() => DEFAULT_BOOMERANG_SETTINGS);
     setAssetName("default-boomerang");
     setDetectedTrace(null);
     setTraceStatus("No input");
@@ -262,7 +333,8 @@ export function BoomerangGenerator() {
         `${assetName || "vectorvisualgen-boomerang"}.svg`,
       );
       setExportStatus("SVG ready");
-    } catch {
+    } catch (error) {
+      console.error("SVG export failed:", error);
       setExportStatus("SVG failed");
     }
   }
@@ -279,7 +351,8 @@ export function BoomerangGenerator() {
         );
       });
       setExportStatus(`${layers.length} layer SVGs ready`);
-    } catch {
+    } catch (error) {
+      console.error("Layer SVG export failed:", error);
       setExportStatus("Export failed");
     }
   }
@@ -314,7 +387,8 @@ export function BoomerangGenerator() {
       canvas.toBlob((blob) => {
         if (blob) downloadBlob(blob, `${assetName || "boomerang"}-2400.png`);
       }, "image/png");
-    } catch {
+    } catch (error) {
+      console.error("PNG export failed:", error);
       setExportStatus("PNG failed");
     }
   }
@@ -337,12 +411,15 @@ export function BoomerangGenerator() {
         ...current,
       ].slice(0, MAX_GALLERY_ITEMS));
       setGalleryStatus("Saved");
-    } catch {
+    } catch (error) {
+      console.error("Gallery save failed:", error);
       setGalleryStatus("Gallery failed");
     }
   }
 
   async function syncToFigma() {
+    if (figmaInFlight.current) return;
+    figmaInFlight.current = true;
     setFigmaStatus("Preparing");
     try {
       const response = await fetch("/api/figma/sync", {
@@ -378,8 +455,11 @@ export function BoomerangGenerator() {
       setFigmaStatus(
         `${result.targetVerified ? "Bridge target ok" : "Bridge ready"}${galleryLabel}`,
       );
-    } catch {
+    } catch (error) {
+      console.error("Figma sync failed:", error);
       setFigmaStatus("Failed");
+    } finally {
+      figmaInFlight.current = false;
     }
   }
 
@@ -404,7 +484,8 @@ export function BoomerangGenerator() {
       const result = await traceImageFile(file);
       setDetectedTrace(result);
       setTraceStatus(`${result.shapes.length} paths`);
-    } catch {
+    } catch (error) {
+      console.error("Image tracing failed:", error);
       setDetectedTrace(null);
       setTraceStatus("Failed");
     } finally {
@@ -835,7 +916,8 @@ export function BoomerangGenerator() {
               <button
                 type="button"
                 onClick={syncToFigma}
-                className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#0b8f8f] px-5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
+                disabled={figmaStatus === "Preparing"}
+                className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#0b8f8f] px-5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <PenTool size={16} />
                 {figmaStatus === "Preparing" ? "Sync..." : "Figma"}
@@ -888,7 +970,7 @@ export function BoomerangGenerator() {
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={item.dataUrl}
-                        alt=""
+                        alt={item.name}
                         className="aspect-square w-full rounded-2xl object-cover"
                       />
                       <div className="mt-2 flex items-center justify-between gap-2 px-1">

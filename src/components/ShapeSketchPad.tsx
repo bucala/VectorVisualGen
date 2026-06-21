@@ -76,6 +76,7 @@ export function ShapeSketchPad({ onChange, initialShapes }: Props) {
   const [shapes, setShapes] = useState<Point[][]>(initialShapes ?? []);
   const drawing = useRef(false);
   const stroke = useRef<Point[]>([]);
+  const gridCache = useRef<HTMLCanvasElement | null>(null);
 
   function redrawCanvas(activeStroke: Point[]) {
     const canvas = canvasRef.current;
@@ -83,16 +84,26 @@ export function ShapeSketchPad({ onChange, initialShapes }: Props) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, PAD_W, PAD_H);
-
-    ctx.fillStyle = "#c8cec6";
-    for (let x = 20; x < PAD_W; x += 28) {
-      for (let y = 20; y < PAD_H; y += 28) {
-        ctx.beginPath();
-        ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-        ctx.fill();
+    if (!gridCache.current) {
+      const grid = document.createElement("canvas");
+      grid.width = PAD_W;
+      grid.height = PAD_H;
+      const gridCtx = grid.getContext("2d");
+      if (gridCtx) {
+        gridCtx.fillStyle = "#c8cec6";
+        for (let x = 20; x < PAD_W; x += 28) {
+          for (let y = 20; y < PAD_H; y += 28) {
+            gridCtx.beginPath();
+            gridCtx.arc(x, y, 1.5, 0, Math.PI * 2);
+            gridCtx.fill();
+          }
+        }
       }
+      gridCache.current = grid;
     }
+
+    ctx.clearRect(0, 0, PAD_W, PAD_H);
+    ctx.drawImage(gridCache.current, 0, 0);
 
     if (activeStroke.length > 1) {
       ctx.beginPath();

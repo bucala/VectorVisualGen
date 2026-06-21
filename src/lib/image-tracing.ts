@@ -269,6 +269,9 @@ function createCleanedImageData(
 }
 
 function extractDetectedShapes(svg: string, background: Rgb) {
+  if (/<\s*(script|foreignobject)\b/i.test(svg)) {
+    return [];
+  }
   const document = new DOMParser().parseFromString(svg, "image/svg+xml");
   const paths = Array.from(document.querySelectorAll("path"));
   const backgroundColor = `rgb(${Math.round(background.r)},${Math.round(
