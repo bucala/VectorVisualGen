@@ -131,7 +131,7 @@ function buildZip(files: { name: string; data: Uint8Array }[]): Blob {
     ...u16(n), ...u16(n), ...u32(centralSize), ...u32(centralStart), 0, 0,
   ]);
 
-  return new Blob([...localParts, ...centralParts, endRecord], { type: "application/zip" });
+  return new Blob([...localParts, ...centralParts, endRecord] as BlobPart[], { type: "application/zip" });
 }
 
 const numericControls: NumericControl[] = [
