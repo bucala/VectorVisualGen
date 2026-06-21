@@ -230,47 +230,32 @@ function sampleBounds(layer: BoomerangLayerSettings): SampleBounds {
   };
 }
 
-// Boomerang templates: 5-point outer arc only (left-tip → elbow → apex → elbow → right-tip).
-// The Catmull-Rom closing segment (right-tip → left-tip) naturally creates the curved base,
-// producing a closed stroke loop that resembles an authentic boomerang outline.
-const BUILT_IN_TEMPLATES: Point[][] = [
-  // 1. Classic symmetric V (~90°)
-  [
-    { x: -110, y: 6 },  { x: -66, y: -52 }, { x: 0, y: -72 },
-    { x: 66, y: -52 },  { x: 110, y: 6 },
-  ],
-  // 2. Wide shallow V (~130°)
-  [
-    { x: -118, y: 10 }, { x: -72, y: -30 }, { x: 0, y: -46 },
-    { x: 72, y: -30 },  { x: 118, y: 10 },
-  ],
-  // 3. Deep narrow V (~55°)
-  [
-    { x: -108, y: 4 },  { x: -46, y: -64 }, { x: 0, y: -88 },
-    { x: 46, y: -64 },  { x: 108, y: 4 },
-  ],
-  // 4. Asymmetric — one arm longer than the other
-  [
-    { x: -60, y: 8 },   { x: -28, y: -46 }, { x: 0, y: -72 },
-    { x: 76, y: -52 },  { x: 124, y: 6 },
-  ],
-  // 5. Organic — gently curved arms, slight asymmetry
-  [
-    { x: -110, y: 8 },  { x: -82, y: -30 }, { x: -10, y: -74 },
-    { x: 60, y: -50 },  { x: 112, y: 8 },
-  ],
+// Boomerang contour defined by the 3-harmonic Fourier model:
+//   x(t) = sx · (cos t + A·cos 2t + B·cos 3t)
+//   y(t) = sy · (sin t − A·sin 2t + C·sin 3t)
+// The k=2 term creates the boomerang bend; k=3 adds corner detail and arm character.
+// The curve is analytically closed and C∞ — tangential continuity is guaranteed.
+type FourierTemplate = { A: number; B: number; C: number };
+
+const FOURIER_SEGMENTS = 12;   // 12 × 30° cubic Hermite–Bezier segments per contour
+const FOURIER_BASE_SCALE = 75; // canvas units for unit-amplitude fundamental
+
+const FOURIER_TEMPLATES: FourierTemplate[] = [
+  { A: 0.52, B: 0.15, C: 0.18 }, // classic balanced bend
+  { A: 0.40, B: 0.10, C: 0.12 }, // shallow, wide arc
+  { A: 0.62, B: 0.18, C: 0.24 }, // deep narrow V
+  { A: 0.48, B: 0.22, C: 0.14 }, // pronounced rounded corners
+  { A: 0.56, B: 0.12, C: 0.28 }, // elongated asymmetric form
 ];
 
-function createClosedBoomerangPath(
+// Catmull-Rom closed spline for user-drawn custom templates (Point[][]).
+function createCatmullRomPath(
   random: () => number,
   chaos: number,
   index: number,
-  customTemplates?: Point[][],
-) {
-  const templates =
-    customTemplates && customTemplates.length > 0 ? customTemplates : BUILT_IN_TEMPLATES;
-  const rawTemplate = templates[index % templates.length];
-
+  customTemplates: Point[][],
+): string {
+  const rawTemplate = customTemplates[index % customTemplates.length];
   const perturb = 0.04 + chaos * 0.10;
   const stretchX = 0.92 + random() * (0.16 + chaos * 0.16);
   const stretchY = 0.80 + random() * (0.14 + chaos * 0.12);
@@ -280,8 +265,6 @@ function createClosedBoomerangPath(
     y: pt.y * stretchY * (0.98 + random() * (0.04 + chaos * 0.06)) + jitter(random, 14 * perturb),
   }));
 
-  // Catmull-Rom → cubic bezier. The closing segment (tip → tip) creates the smooth base arc.
-  // Higher tension (0.40–0.46) keeps the base arc curved and the arms well-defined.
   const tension = 0.40 + random() * (0.06 + chaos * 0.06);
   const controls = points.map((point, i) => {
     const prev = points[(i - 1 + points.length) % points.length];
@@ -295,11 +278,69 @@ function createClosedBoomerangPath(
   const commands = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
   for (let i = 0; i < points.length; i++) {
     const ni = (i + 1) % points.length;
-    const c1 = controls[i].out;
-    const c2 = controls[ni].in;
-    const p2 = points[ni];
-    commands.push(`C ${c1.x.toFixed(2)} ${c1.y.toFixed(2)} ${c2.x.toFixed(2)} ${c2.y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`);
+    commands.push(
+      `C ${controls[i].out.x.toFixed(2)} ${controls[i].out.y.toFixed(2)} ${controls[ni].in.x.toFixed(2)} ${controls[ni].in.y.toFixed(2)} ${points[ni].x.toFixed(2)} ${points[ni].y.toFixed(2)}`
+    );
   }
+  commands.push("Z");
+  return commands.join(" ");
+}
+
+// Built-in contours use the analytic Fourier model. Each segment is a cubic
+// Hermite–Bezier with control points C1 = Pi + (h/3)·Pi', C2 = Pi+1 − (h/3)·Pi+1',
+// giving an exact polynomial match to the parametric derivative at both endpoints.
+function createClosedBoomerangPath(
+  random: () => number,
+  chaos: number,
+  index: number,
+  customTemplates?: Point[][],
+): string {
+  if (customTemplates && customTemplates.length > 0) {
+    return createCatmullRomPath(random, chaos, index, customTemplates);
+  }
+
+  const tmpl = FOURIER_TEMPLATES[index % FOURIER_TEMPLATES.length];
+
+  // Perturb Fourier coefficients for per-element shape variation
+  const A = tmpl.A * (0.88 + random() * (0.24 + chaos * 0.18));
+  const B = tmpl.B * (0.80 + random() * (0.40 + chaos * 0.28));
+  const C = tmpl.C * (0.80 + random() * (0.40 + chaos * 0.28));
+  const sx = FOURIER_BASE_SCALE * (0.90 + random() * (0.18 + chaos * 0.16));
+  const sy = FOURIER_BASE_SCALE * (0.78 + random() * (0.16 + chaos * 0.14));
+
+  const N = FOURIER_SEGMENTS;
+  const h = (2 * Math.PI) / N;
+
+  const pos = (t: number) => ({
+    x: sx * (Math.cos(t) + A * Math.cos(2 * t) + B * Math.cos(3 * t)),
+    y: sy * (Math.sin(t) - A * Math.sin(2 * t) + C * Math.sin(3 * t)),
+  });
+  const deriv = (t: number) => ({
+    x: sx * (-Math.sin(t) - 2 * A * Math.sin(2 * t) - 3 * B * Math.sin(3 * t)),
+    y: sy * (Math.cos(t) - 2 * A * Math.cos(2 * t) + 3 * C * Math.cos(3 * t)),
+  });
+
+  const p0 = pos(0);
+  const commands = [`M ${p0.x.toFixed(2)} ${p0.y.toFixed(2)}`];
+
+  for (let i = 0; i < N; i++) {
+    const ti = i * h;
+    const ti1 = (i + 1) * h;
+    const pi = i === 0 ? p0 : pos(ti);
+    const dpi = deriv(ti);
+    const pi1 = pos(ti1);
+    const dpi1 = deriv(ti1);
+
+    const c1x = pi.x + (h / 3) * dpi.x;
+    const c1y = pi.y + (h / 3) * dpi.y;
+    const c2x = pi1.x - (h / 3) * dpi1.x;
+    const c2y = pi1.y - (h / 3) * dpi1.y;
+
+    commands.push(
+      `C ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${pi1.x.toFixed(2)} ${pi1.y.toFixed(2)}`
+    );
+  }
+
   commands.push("Z");
   return commands.join(" ");
 }
