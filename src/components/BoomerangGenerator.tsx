@@ -68,6 +68,71 @@ type SavedGalleryItem = {
 };
 
 type PngScale = 1 | 2 | 4;
+type ExportFormat = "square" | "a4l" | "a3l" | "16:9";
+
+const EXPORT_FORMATS: Record<ExportFormat, { label: string; w: number; h: number }> = {
+  square: { label: "Štvorec", w: CANVAS_SIZE, h: CANVAS_SIZE },
+  a4l:    { label: "A4 na šírku", w: 1414, h: 1000 },
+  a3l:    { label: "A3 na šírku", w: 2000, h: 1414 },
+  "16:9": { label: "16:9",        w: 1920, h: 1080 },
+};
+
+// Minimal ZIP builder (stored/uncompressed, no external library needed)
+const CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32zip(data: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of data) crc = ((CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)) >>> 0);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function buildZip(files: { name: string; data: Uint8Array }[]): Blob {
+  const enc = new TextEncoder();
+  const u16 = (n: number): number[] => [n & 0xff, (n >>> 8) & 0xff];
+  const u32 = (n: number): number[] => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
+  const ua = (d: Uint8Array): number[] => Array.from(d);
+
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let localOffset = 0;
+
+  for (const file of files) {
+    const name = enc.encode(file.name);
+    const crc = crc32zip(file.data);
+    const sz = file.data.length;
+    const local = new Uint8Array([
+      0x50, 0x4b, 0x03, 0x04, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      ...u32(crc), ...u32(sz), ...u32(sz), ...u16(name.length), 0, 0, ...ua(name),
+    ]);
+    const central = new Uint8Array([
+      0x50, 0x4b, 0x01, 0x02, 20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      ...u32(crc), ...u32(sz), ...u32(sz),
+      ...u16(name.length), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      ...u32(localOffset), ...ua(name),
+    ]);
+    localParts.push(local, file.data);
+    centralParts.push(central);
+    localOffset += local.length + sz;
+  }
+
+  const centralStart = localOffset;
+  const centralSize = centralParts.reduce((s, p) => s + p.length, 0);
+  const n = files.length;
+  const endRecord = new Uint8Array([
+    0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0,
+    ...u16(n), ...u16(n), ...u32(centralSize), ...u32(centralStart), 0, 0,
+  ]);
+
+  return new Blob([...localParts, ...centralParts, endRecord], { type: "application/zip" });
+}
 
 const numericControls: NumericControl[] = [
   { key: "density", label: "Hustota", min: 24, max: 260, step: 1 },
@@ -193,6 +258,7 @@ export function BoomerangGenerator() {
   >({ bottom: { shapes: [], count: 0 }, middle: { shapes: [], count: 0 }, top: { shapes: [], count: 0 } });
   const [activeSketchLayer, setActiveSketchLayer] = useState<LayerId>("bottom");
   const [pngScale, setPngScale] = useState<PngScale>(2);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("square");
   const [seedWord, setSeedWord] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [urlCopied, setUrlCopied] = useState(false);
@@ -470,7 +536,30 @@ export function BoomerangGenerator() {
     }
   }
 
-  async function renderCurrentPatternCanvas(scale: number = 1) {
+  async function exportZip() {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportStatus("Preparing ZIP…");
+    try {
+      const enc = new TextEncoder();
+      const baseName = assetName || "vectorvisualgen-boomerang";
+      const mainSvg = createBoomerangSvg(settings, detectedTrace?.shapes, layerOverrides);
+      const layers = createSeparatedLayerSvgs(settings, detectedTrace?.shapes, layerOverrides);
+      const files = [
+        { name: `${baseName}.svg`, data: enc.encode(mainSvg) },
+        ...layers.map((l) => ({ name: `${baseName}-${l.fileSuffix}.svg`, data: enc.encode(l.svg) })),
+      ];
+      downloadBlob(buildZip(files), `${baseName}.zip`);
+      setExportStatus(`ZIP (${files.length} SVGs) ready`);
+    } catch (error) {
+      console.error("ZIP export failed:", error);
+      setExportStatus("ZIP failed");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  async function renderCurrentPatternCanvas(scale: number = 1, fmt: ExportFormat = "square") {
     const svg = createBoomerangSvg(settings, detectedTrace?.shapes, layerOverrides);
     const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(svgBlob);
@@ -479,16 +568,25 @@ export function BoomerangGenerator() {
     image.src = url;
     await image.decode();
 
+    const f = EXPORT_FORMATS[fmt];
+    const targetW = Math.round(f.w * scale);
+    const targetH = Math.round(f.h * scale);
     const canvas = document.createElement("canvas");
-    canvas.width = CANVAS_SIZE * scale;
-    canvas.height = CANVAS_SIZE * scale;
+    canvas.width = targetW;
+    canvas.height = targetH;
     const context = canvas.getContext("2d");
     if (!context) {
       URL.revokeObjectURL(url);
       throw new Error("Canvas context is unavailable.");
     }
 
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    // Fill background, then letterbox the square SVG pattern into the target dimensions
+    context.fillStyle = settings.background;
+    context.fillRect(0, 0, targetW, targetH);
+    const fitRatio = Math.min(targetW / CANVAS_SIZE, targetH / CANVAS_SIZE);
+    const drawW = CANVAS_SIZE * fitRatio;
+    const drawH = CANVAS_SIZE * fitRatio;
+    context.drawImage(image, (targetW - drawW) / 2, (targetH - drawH) / 2, drawW, drawH);
     URL.revokeObjectURL(url);
     return canvas;
   }
@@ -498,18 +596,21 @@ export function BoomerangGenerator() {
     setIsExporting(true);
     setExportStatus("Exporting PNG…");
     try {
-      const canvas = await renderCurrentPatternCanvas(pngScale);
+      const canvas = await renderCurrentPatternCanvas(pngScale, exportFormat);
+      const pxW = canvas.width;
+      const pxH = canvas.height;
       await new Promise<void>((resolve, reject) => {
         canvas.toBlob((blob) => {
           if (!blob) {
             reject(new Error("Canvas produced null blob."));
             return;
           }
-          downloadBlob(blob, `${assetName || "boomerang"}-${CANVAS_SIZE * pngScale}.png`);
+          const suffix = exportFormat !== "square" ? `-${exportFormat}` : "";
+          downloadBlob(blob, `${assetName || "boomerang"}${suffix}-${pxW}x${pxH}.png`);
           resolve();
         }, "image/png");
       });
-      setExportStatus(`PNG ${CANVAS_SIZE * pngScale}px ready`);
+      setExportStatus(`PNG ${pxW}×${pxH}px ready`);
     } catch (error) {
       console.error("PNG export failed:", error);
       setExportStatus("PNG failed");
@@ -557,6 +658,7 @@ export function BoomerangGenerator() {
             id: item.id,
             name: item.name,
             createdAt: item.createdAt,
+            svg: item.svg, // include SVG so Figma bridge has complete content
           })),
         }),
       });
@@ -859,8 +961,8 @@ export function BoomerangGenerator() {
           {/* Export section */}
           <section className="mt-4 space-y-2">
             {/* PNG scale selector */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-[#6b675e]">PNG rozlíšenie:</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-medium text-[#6b675e]">Mierka:</span>
               <div className="flex gap-1">
                 {([1, 2, 4] as PngScale[]).map((s) => (
                   <button
@@ -873,7 +975,28 @@ export function BoomerangGenerator() {
                         : "border-black/10 bg-white text-[#6b675e] hover:border-[#0b8f8f]"
                     }`}
                   >
-                    {s}× <span className="opacity-70">({CANVAS_SIZE * s}px)</span>
+                    {s}×
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Canvas format selector */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-medium text-[#6b675e]">Formát:</span>
+              <div className="flex gap-1 flex-wrap">
+                {(Object.entries(EXPORT_FORMATS) as [ExportFormat, { label: string; w: number; h: number }][]).map(([fmt, f]) => (
+                  <button
+                    key={fmt}
+                    type="button"
+                    onClick={() => setExportFormat(fmt)}
+                    className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
+                      exportFormat === fmt
+                        ? "border-[#0b8f8f] bg-[#0b8f8f] text-white"
+                        : "border-black/10 bg-white text-[#6b675e] hover:border-[#0b8f8f]"
+                    }`}
+                    title={`${f.w}×${f.h}px`}
+                  >
+                    {f.label}
                   </button>
                 ))}
               </div>
@@ -909,15 +1032,26 @@ export function BoomerangGenerator() {
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={exportAnimatedSvg}
-              disabled={isExporting}
-              className="flex h-9 w-full items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white text-xs font-semibold shadow-sm transition hover:-translate-y-0.5 disabled:opacity-50"
-            >
-              <Sparkles size={13} />
-              Animated SVG
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={exportAnimatedSvg}
+                disabled={isExporting}
+                className="flex h-9 items-center justify-center gap-1.5 rounded-2xl border border-black/10 bg-white text-xs font-semibold shadow-sm transition hover:-translate-y-0.5 disabled:opacity-50"
+              >
+                <Sparkles size={13} />
+                Animated SVG
+              </button>
+              <button
+                type="button"
+                onClick={exportZip}
+                disabled={isExporting}
+                className="flex h-9 items-center justify-center gap-1.5 rounded-2xl border border-black/10 bg-white text-xs font-semibold shadow-sm transition hover:-translate-y-0.5 disabled:opacity-50"
+              >
+                <Download size={13} />
+                ZIP
+              </button>
+            </div>
           </section>
 
           <p className="mt-3 rounded-2xl border border-black/10 bg-white/55 px-3 py-2 font-mono text-xs text-[#6b675e]">

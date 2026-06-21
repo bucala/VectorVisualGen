@@ -230,45 +230,45 @@ function sampleBounds(layer: BoomerangLayerSettings): SampleBounds {
   };
 }
 
-// Properly designed retro boomerang templates.
+// Retro boomerang templates with tapered tips for authentic silhouette.
 // Each template: 10 points — outer arc (left-tip → apex → right-tip) followed by
 // inner arc (right-tip → apex → left-tip, reversed to close the shape).
-// Arm width is uniform (~20 units) and y-values are monotone from tips to apex.
+// Tip arm width ≈ 4 units (narrow), elbow arm width ≈ 16–18 units (widest).
 const BUILT_IN_TEMPLATES: Point[][] = [
-  // 1. Classic symmetric V (~90° V-angle)
+  // 1. Classic symmetric V (~90°) — tapered tips
   [
-    { x: -110, y: 8 },   { x: -65, y: -52 },  { x: 0, y: -72 },
-    { x: 65, y: -52 },   { x: 110, y: 8 },
-    { x: 98, y: 24 },    { x: 53, y: -36 },   { x: 0, y: -52 },
-    { x: -53, y: -36 },  { x: -98, y: 24 },
+    { x: -112, y: 6 },   { x: -66, y: -52 },  { x: 0, y: -72 },
+    { x: 66, y: -52 },   { x: 112, y: 6 },
+    { x: 112, y: 2 },    { x: 54, y: -40 },   { x: 0, y: -54 },
+    { x: -54, y: -40 },  { x: -112, y: 2 },
   ],
-  // 2. Wide shallow V (~120° V-angle)
+  // 2. Wide shallow V (~130°) — near-flat check mark silhouette
   [
-    { x: -112, y: 16 },  { x: -68, y: -36 },  { x: 0, y: -52 },
-    { x: 68, y: -36 },   { x: 112, y: 16 },
-    { x: 102, y: 33 },   { x: 58, y: -19 },   { x: 0, y: -32 },
-    { x: -58, y: -19 },  { x: -102, y: 33 },
+    { x: -118, y: 10 },  { x: -72, y: -30 },  { x: 0, y: -46 },
+    { x: 72, y: -30 },   { x: 118, y: 10 },
+    { x: 118, y: 6 },    { x: 60, y: -18 },   { x: 0, y: -30 },
+    { x: -60, y: -18 },  { x: -118, y: 6 },
   ],
-  // 3. Tight acute V (~65° V-angle)
+  // 3. Deep narrow V (~55°) — elongated tick shape
   [
-    { x: -108, y: 4 },   { x: -50, y: -56 },  { x: 0, y: -82 },
-    { x: 50, y: -56 },   { x: 108, y: 4 },
-    { x: 96, y: 20 },    { x: 38, y: -40 },   { x: 0, y: -62 },
-    { x: -38, y: -40 },  { x: -96, y: 20 },
+    { x: -108, y: 4 },   { x: -46, y: -64 },  { x: 0, y: -88 },
+    { x: 46, y: -64 },   { x: 108, y: 4 },
+    { x: 108, y: 0 },    { x: 34, y: -50 },   { x: 0, y: -70 },
+    { x: -34, y: -50 },  { x: -108, y: 0 },
   ],
-  // 4. Asymmetric V (left arm slightly shorter)
+  // 4. Asymmetric V — one arm notably longer than the other
   [
-    { x: -106, y: 10 },  { x: -70, y: -50 },  { x: -4, y: -74 },
-    { x: 66, y: -52 },   { x: 112, y: 8 },
-    { x: 100, y: 24 },   { x: 54, y: -36 },   { x: -4, y: -54 },
-    { x: -57, y: -35 },  { x: -89, y: 20 },
+    { x: -60, y: 8 },    { x: -30, y: -46 },  { x: 0, y: -72 },
+    { x: 76, y: -52 },   { x: 124, y: 6 },
+    { x: 124, y: 2 },    { x: 64, y: -40 },   { x: 0, y: -56 },
+    { x: -22, y: -34 },  { x: -60, y: 4 },
   ],
-  // 5. Organic V (gently curved arms, slight asymmetry)
+  // 5. Organic V — gently curved arms, slight asymmetry
   [
-    { x: -108, y: 8 },   { x: -80, y: -30 },  { x: -10, y: -74 },
-    { x: 60, y: -50 },   { x: 110, y: 10 },
-    { x: 99, y: 26 },    { x: 49, y: -34 },   { x: -7, y: -54 },
-    { x: -67, y: -15 },  { x: -92, y: 20 },
+    { x: -110, y: 8 },   { x: -82, y: -30 },  { x: -10, y: -74 },
+    { x: 60, y: -50 },   { x: 112, y: 8 },
+    { x: 112, y: 4 },    { x: 50, y: -38 },   { x: -8, y: -57 },
+    { x: -70, y: -18 },  { x: -108, y: 5 },
   ],
 ];
 
@@ -328,9 +328,10 @@ function createClosedBoomerangPath(
     y: pt.y * stretchY * (0.98 + random() * (0.04 + chaos * 0.06)) + jitter(random, 14 * perturb),
   }));
 
-  // Two Laplacian smoothing passes for organic curves
+  // Three Laplacian smoothing passes for organic, rounded arms
   points = laplacianSmooth(points, 0.30);
   points = laplacianSmooth(points, 0.20);
+  points = laplacianSmooth(points, 0.10);
 
   // Catmull-Rom → cubic bezier with higher tension for smooth results
   const controls = points.map((point, i) => {
