@@ -131,12 +131,12 @@ function buildZip(files: { name: string; data: Uint8Array }[]): Blob {
     ...u16(n), ...u16(n), ...u32(centralSize), ...u32(centralStart), 0, 0,
   ]);
 
-  return new Blob([...localParts, ...centralParts, endRecord], { type: "application/zip" });
+  return new Blob([...localParts, ...centralParts, endRecord] as BlobPart[], { type: "application/zip" });
 }
 
 const numericControls: NumericControl[] = [
   { key: "density", label: "Hustota", min: 24, max: 260, step: 1 },
-  { key: "strokeWidth", label: "Hrúbka ramien", min: 0.5, max: 3, step: 0.1 },
+  { key: "strokeWidth", label: "Hrúbka čiary", min: 0.5, max: 3, step: 0.1 },
   { key: "blur", label: "Rozmazanie", min: 0, max: 100, step: 1, suffix: "%" },
   { key: "rotation", label: "Rotácia", min: -180, max: 180, step: 1 },
 ];
@@ -1246,7 +1246,11 @@ export function BoomerangGenerator() {
                       {element.blur > 0 ? (
                         <path
                           d={element.path}
-                          fill={element.stroke}
+                          stroke={element.stroke}
+                          strokeWidth={element.strokeWidth * 5}
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
                           opacity={element.opacity * 0.62}
                           filter="url(#line-blur-preview)"
                           transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
@@ -1254,7 +1258,11 @@ export function BoomerangGenerator() {
                       ) : null}
                       <motion.path
                         d={element.path}
-                        fill={element.stroke}
+                        stroke={element.stroke}
+                        strokeWidth={element.strokeWidth * 5}
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                         opacity={element.opacity}
                         transform={`translate(${element.x.toFixed(2)} ${element.y.toFixed(2)}) rotate(${element.rotation.toFixed(2)}) scale(${element.scale.toFixed(3)})`}
                         initial={{ opacity: 0 }}
