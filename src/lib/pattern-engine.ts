@@ -230,23 +230,56 @@ function sampleBounds(layer: BoomerangLayerSettings): SampleBounds {
   };
 }
 
-// Boomerang contour defined by the 3-harmonic Fourier model:
-//   x(t) = sx · (cos t + A·cos 2t + B·cos 3t)
-//   y(t) = sy · (sin t − A·sin 2t + C·sin 3t)
-// The k=2 term creates the boomerang bend; k=3 adds corner detail and arm character.
-// The curve is analytically closed and C∞ — tangential continuity is guaranteed.
-type FourierTemplate = { A: number; B: number; C: number };
+// ─── Boomerang shape model ───────────────────────────────────────────────────
+//
+// Each shape is a closed 3-arc cubic Bezier loop with three anchor points:
+//
+//   tipL  (-spread, tipY)   ← left arm tip  (pointed corner)
+//   apex  ( asymX, -height) ← top vertex / elbow
+//   tipR  (+spread, tipY)   ← right arm tip (pointed corner)
+//
+// Three arcs connect them in order: tipL→apex (left arm), apex→tipR (right arm),
+// tipR→tipL (base). All three arcs bow away from the V interior using the same
+// right-hand-perpendicular formula, so bowing direction is consistent regardless
+// of each arc's orientation.
+//
+// Template parameters:
+//   spread  — half-width of the V (x distance from centre to tip)
+//   height  — apex elevation above the tips baseline
+//   armBow  — convexity of the left and right arms [0=straight, ~0.5=classic bend]
+//   baseBow — downward sag of the closing base arc [0=flat, ~0.25=gentle arch]
 
-const FOURIER_SEGMENTS = 12;   // 12 × 30° cubic Hermite–Bezier segments per contour
-const FOURIER_BASE_SCALE = 75; // canvas units for unit-amplitude fundamental
+export type BoomerangShape = {
+  spread:  number;
+  height:  number;
+  armBow:  number;
+  baseBow: number;
+};
 
-const FOURIER_TEMPLATES: FourierTemplate[] = [
-  { A: 0.52, B: 0.15, C: 0.18 }, // classic balanced bend
-  { A: 0.40, B: 0.10, C: 0.12 }, // shallow, wide arc
-  { A: 0.62, B: 0.18, C: 0.24 }, // deep narrow V
-  { A: 0.48, B: 0.22, C: 0.14 }, // pronounced rounded corners
-  { A: 0.56, B: 0.12, C: 0.28 }, // elongated asymmetric form
+export const SHAPE_TEMPLATES: BoomerangShape[] = [
+  { spread: 108, height: 75, armBow: 0.38, baseBow: 0.22 }, // classic balanced V
+  { spread: 120, height: 52, armBow: 0.28, baseBow: 0.18 }, // wide shallow
+  { spread:  95, height: 94, armBow: 0.44, baseBow: 0.28 }, // tall narrow
+  { spread: 112, height: 68, armBow: 0.52, baseBow: 0.32 }, // strongly bowed arms
+  { spread: 102, height: 82, armBow: 0.34, baseBow: 0.14 }, // subtle curve
 ];
+
+// Returns Bezier control points for an arc from p0 to p1 that bows outward
+// from the V interior. The right-hand perpendicular of the chord (dy,−dx)/|d|
+// points away from the V centre for every arc in the template.
+function bowedBezierControls(
+  p0: Point, p1: Point, bow: number,
+): { c1: Point; c2: Point } {
+  const dx = p1.x - p0.x, dy = p1.y - p0.y;
+  const L = Math.hypot(dx, dy);
+  if (L < 0.001) return { c1: { ...p0 }, c2: { ...p1 } };
+  const rx = dy / L, ry = -dx / L;       // right-hand unit perpendicular
+  const offset = bow * L * 0.45;         // perpendicular offset ∝ chord length
+  return {
+    c1: { x: p0.x + dx / 3 + rx * offset, y: p0.y + dy / 3 + ry * offset },
+    c2: { x: p1.x - dx / 3 + rx * offset, y: p1.y - dy / 3 + ry * offset },
+  };
+}
 
 // Catmull-Rom closed spline for user-drawn custom templates (Point[][]).
 function createCatmullRomPath(
@@ -286,9 +319,6 @@ function createCatmullRomPath(
   return commands.join(" ");
 }
 
-// Built-in contours use the analytic Fourier model. Each segment is a cubic
-// Hermite–Bezier with control points C1 = Pi + (h/3)·Pi', C2 = Pi+1 − (h/3)·Pi+1',
-// giving an exact polynomial match to the parametric derivative at both endpoints.
 function createClosedBoomerangPath(
   random: () => number,
   chaos: number,
@@ -299,50 +329,33 @@ function createClosedBoomerangPath(
     return createCatmullRomPath(random, chaos, index, customTemplates);
   }
 
-  const tmpl = FOURIER_TEMPLATES[index % FOURIER_TEMPLATES.length];
+  const tmpl = SHAPE_TEMPLATES[index % SHAPE_TEMPLATES.length];
 
-  // Perturb Fourier coefficients for per-element shape variation
-  const A = tmpl.A * (0.88 + random() * (0.24 + chaos * 0.18));
-  const B = tmpl.B * (0.80 + random() * (0.40 + chaos * 0.28));
-  const C = tmpl.C * (0.80 + random() * (0.40 + chaos * 0.28));
-  const sx = FOURIER_BASE_SCALE * (0.90 + random() * (0.18 + chaos * 0.16));
-  const sy = FOURIER_BASE_SCALE * (0.78 + random() * (0.16 + chaos * 0.14));
+  // Perturb template parameters for per-element variety
+  const spread  = tmpl.spread  * (0.88 + random() * (0.24 + chaos * 0.18));
+  const height  = tmpl.height  * (0.88 + random() * (0.24 + chaos * 0.18));
+  const armBow  = tmpl.armBow  * (0.72 + random() * (0.56 + chaos * 0.38));
+  const baseBow = tmpl.baseBow * (0.60 + random() * (0.80 + chaos * 0.46));
+  // Slight apex asymmetry so no two boomerangs look identical
+  const asymX = jitter(random, 8 + chaos * 14);
+  const asymY = jitter(random, 4 + chaos * 8);
 
-  const N = FOURIER_SEGMENTS;
-  const h = (2 * Math.PI) / N;
+  const tipL: Point = { x: -spread, y: 10 };
+  const apex: Point = { x: asymX,   y: -height + asymY };
+  const tipR: Point = { x:  spread, y: 10 };
 
-  const pos = (t: number) => ({
-    x: sx * (Math.cos(t) + A * Math.cos(2 * t) + B * Math.cos(3 * t)),
-    y: sy * (Math.sin(t) - A * Math.sin(2 * t) + C * Math.sin(3 * t)),
-  });
-  const deriv = (t: number) => ({
-    x: sx * (-Math.sin(t) - 2 * A * Math.sin(2 * t) - 3 * B * Math.sin(3 * t)),
-    y: sy * (Math.cos(t) - 2 * A * Math.cos(2 * t) + 3 * C * Math.cos(3 * t)),
-  });
+  const la = bowedBezierControls(tipL, apex, armBow);   // left arm
+  const ra = bowedBezierControls(apex, tipR, armBow);   // right arm
+  const ba = bowedBezierControls(tipR, tipL, baseBow);  // base arc
 
-  const p0 = pos(0);
-  const commands = [`M ${p0.x.toFixed(2)} ${p0.y.toFixed(2)}`];
-
-  for (let i = 0; i < N; i++) {
-    const ti = i * h;
-    const ti1 = (i + 1) * h;
-    const pi = i === 0 ? p0 : pos(ti);
-    const dpi = deriv(ti);
-    const pi1 = pos(ti1);
-    const dpi1 = deriv(ti1);
-
-    const c1x = pi.x + (h / 3) * dpi.x;
-    const c1y = pi.y + (h / 3) * dpi.y;
-    const c2x = pi1.x - (h / 3) * dpi1.x;
-    const c2y = pi1.y - (h / 3) * dpi1.y;
-
-    commands.push(
-      `C ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${pi1.x.toFixed(2)} ${pi1.y.toFixed(2)}`
-    );
-  }
-
-  commands.push("Z");
-  return commands.join(" ");
+  const f = (n: number) => n.toFixed(2);
+  return [
+    `M ${f(tipL.x)} ${f(tipL.y)}`,
+    `C ${f(la.c1.x)} ${f(la.c1.y)} ${f(la.c2.x)} ${f(la.c2.y)} ${f(apex.x)} ${f(apex.y)}`,
+    `C ${f(ra.c1.x)} ${f(ra.c1.y)} ${f(ra.c2.x)} ${f(ra.c2.y)} ${f(tipR.x)} ${f(tipR.y)}`,
+    `C ${f(ba.c1.x)} ${f(ba.c1.y)} ${f(ba.c2.x)} ${f(ba.c2.y)} ${f(tipL.x)} ${f(tipL.y)}`,
+    "Z",
+  ].join(" ");
 }
 
 function jitteredGridFallback(
