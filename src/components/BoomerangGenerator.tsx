@@ -355,7 +355,6 @@ export function BoomerangGenerator() {
             id: item.id,
             name: item.name,
             createdAt: item.createdAt,
-            svg: item.svg,
           })),
         }),
       });
@@ -546,7 +545,7 @@ export function BoomerangGenerator() {
                         <span className="font-medium">{label}</span>
                         <span className="font-mono text-xs text-[#6b675e]">
                           {key === "opacity"
-                            ? Math.round(layer[key] * 100)
+                            ? Math.round((1 - (layer[key] as number)) * 100)
                             : layer[key]}
                           {key === "opacity" ? "%" : suffix}
                         </span>
@@ -556,9 +555,15 @@ export function BoomerangGenerator() {
                         min={min}
                         max={max}
                         step={step}
-                        value={layer[key]}
+                        value={key === "opacity" ? 1 - (layer[key] as number) : layer[key]}
                         onChange={(event) =>
-                          updateLayer(layer.id, key, Number(event.target.value))
+                          updateLayer(
+                            layer.id,
+                            key,
+                            key === "opacity"
+                              ? 1 - Number(event.target.value)
+                              : Number(event.target.value),
+                          )
                         }
                         className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#d8ddd6] accent-[#0b8f8f]"
                       />
@@ -569,7 +574,7 @@ export function BoomerangGenerator() {
             </div>
           </section>
 
-          <section className="mt-4 grid grid-cols-2 gap-2">
+          <section className="mt-4 grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={exportSvg}
@@ -593,14 +598,6 @@ export function BoomerangGenerator() {
             >
               <FileImage size={16} />
               PNG
-            </button>
-            <button
-              type="button"
-              onClick={syncToFigma}
-              className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#0b8f8f] text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
-            >
-              <PenTool size={16} />
-              {figmaStatus === "Preparing" ? "Sync" : "Figma"}
             </button>
           </section>
 
@@ -835,6 +832,14 @@ export function BoomerangGenerator() {
             </motion.div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={syncToFigma}
+                className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#0b8f8f] px-5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
+              >
+                <PenTool size={16} />
+                {figmaStatus === "Preparing" ? "Sync..." : "Figma"}
+              </button>
               <button
                 type="button"
                 onClick={randomizeDesign}
