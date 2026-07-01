@@ -488,12 +488,20 @@ function parseScaleFactor(transform?: string): number {
   return m ? parseFloat(m[1]) : 1;
 }
 
-function extractShapeCentroid(d: string, scaleFactor: number): Point {
+const PATH_COMMAND_TOKEN = /^[MLCQZ]$/;
+
+// Recenters a traced SVG path (M/L/C/Q/Z, absolute coords) around its own
+// centroid and scales it into canvas units, preserving the exact contour
+// instead of substituting a synthetic template. Every command in imagetracerjs
+// output emits coordinates strictly as (x, y) pairs, so a flat sequential
+// pairing of all numeric tokens is sufficient to recenter correctly.
+function recenterTracedPath(d: string, scaleFactor: number): { path: string; centroid: Point } {
+  const tokens = d.match(/[MLCQZ]|-?\d+(?:\.\d+)?/g) ?? [];
   const coords: number[] = [];
-  for (const m of d.matchAll(/(-?\d+(?:\.\d+)?)/g)) {
-    coords.push(parseFloat(m[1]));
+  for (const token of tokens) {
+    if (!PATH_COMMAND_TOKEN.test(token)) coords.push(parseFloat(token));
   }
-  if (coords.length < 2) return { x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 };
+
   let sumX = 0;
   let sumY = 0;
   let count = 0;
@@ -502,7 +510,26 @@ function extractShapeCentroid(d: string, scaleFactor: number): Point {
     sumY += coords[i + 1];
     count += 1;
   }
-  return { x: (sumX / count) * scaleFactor, y: (sumY / count) * scaleFactor };
+  const cx = count > 0 ? sumX / count : 0;
+  const cy = count > 0 ? sumY / count : 0;
+
+  let path = "";
+  let pending: number[] = [];
+  for (const token of tokens) {
+    if (PATH_COMMAND_TOKEN.test(token)) {
+      path += (path ? " " : "") + token;
+      continue;
+    }
+    pending.push(parseFloat(token));
+    if (pending.length === 2) {
+      const x = ((pending[0] - cx) * scaleFactor).toFixed(2);
+      const y = ((pending[1] - cy) * scaleFactor).toFixed(2);
+      path += ` ${x} ${y}`;
+      pending = [];
+    }
+  }
+
+  return { path, centroid: { x: cx * scaleFactor, y: cy * scaleFactor } };
 }
 
 export function generateBoomerangElementsFromTrace(
@@ -517,13 +544,14 @@ export function generateBoomerangElementsFromTrace(
   const topLayerIndex = layerIndexFor("top");
   const topChaos = clamp(topLayer.chaos / 100, 0, 1);
   const topVisualScale = visualScaleFromSlider(topLayer.scale);
-  const topTemplates = layerOverrides?.top?.templates?.length ? layerOverrides.top.templates : undefined;
 
   detectedShapes.forEach((shape, index) => {
     const sf = parseScaleFactor(shape.transform);
-    const centroid = extractShapeCentroid(shape.d, sf);
+    // Use the shape's own traced contour (the black outline detected in the
+    // uploaded image) instead of a synthetic template, so the generated
+    // pattern follows the actual vector trajectory from the source photo.
+    const { path, centroid } = recenterTracedPath(shape.d, sf);
     const r = mulberry32(settings.seed + index * 7919 + 312701);
-    const path = createClosedBoomerangPath(r, topChaos, index, topTemplates);
     const localScale = topVisualScale * (0.72 + r() * (0.16 + topChaos * 0.34));
     const rotation = settings.rotation + r() * 360;
     const strokeWidth = settings.strokeWidth * (0.72 + r() * (0.05 + topChaos * 0.24));
