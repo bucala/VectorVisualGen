@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Trash2, X } from "lucide-react";
+import { Circle, Pencil, Square, Trash2, Triangle, X } from "lucide-react";
 import { PointerEvent, useEffect, useRef, useState } from "react";
 
 import { type Point } from "@/lib/boomerang";
@@ -10,6 +10,76 @@ const PAD_H = 360;
 const MAX_SHAPES = 6;
 const RDP_EPSILON = 10;
 const MIN_POINTS = 4;
+
+function randRange(min: number, max: number) {
+  return min + Math.random() * (max - min);
+}
+
+function approachPoint(corner: Point, from: Point, ratio: number): Point {
+  return {
+    x: corner.x + (from.x - corner.x) * ratio,
+    y: corner.y + (from.y - corner.y) * ratio,
+  };
+}
+
+// Inserts approach/departure points close to each vertex instead of just the
+// vertex itself. A closed Catmull-Rom spline through raw corners balloons
+// outward, but two near-coincident points on either side of a corner keep
+// the tangent tight there, so the corner reads as crisp rather than rounded.
+function sharpenPolygon(corners: Point[], approachRatio: number): Point[] {
+  const points: Point[] = [];
+  const n = corners.length;
+  for (let i = 0; i < n; i++) {
+    const prev = corners[(i - 1 + n) % n];
+    const curr = corners[i];
+    const next = corners[(i + 1) % n];
+    points.push(approachPoint(curr, prev, approachRatio));
+    points.push(approachPoint(curr, next, approachRatio));
+  }
+  return points;
+}
+
+// Deformed primitive generators: each click produces a fresh asymmetric
+// variant (independent per-vertex jitter, not mirrored) in the same template
+// coordinate space used by hand-drawn shapes and boomerang templates.
+function generateDeformedSquare(): Point[] {
+  const half = 84;
+  const corners: Point[] = [
+    { x: -half + randRange(-18, 18), y: -half + randRange(-16, 16) },
+    { x:  half + randRange(-18, 18), y: -half + randRange(-16, 16) },
+    { x:  half + randRange(-18, 18), y:  half + randRange(-16, 16) },
+    { x: -half + randRange(-18, 18), y:  half + randRange(-16, 16) },
+  ];
+  return sharpenPolygon(corners, 0.32);
+}
+
+function generateDeformedTriangle(): Point[] {
+  const baseAngles = [-90, 30, 150];
+  const corners: Point[] = baseAngles.map((deg) => {
+    const angle = ((deg + randRange(-18, 18)) * Math.PI) / 180;
+    const r = 96 * randRange(0.76, 1.15);
+    return { x: Math.cos(angle) * r, y: Math.sin(angle) * r * 0.82 };
+  });
+  return sharpenPolygon(corners, 0.32);
+}
+
+function generateDeformedCircle(): Point[] {
+  const points: Point[] = [];
+  const count = 11 + Math.floor(Math.random() * 4);
+  const baseRadius = 84;
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + randRange(-0.12, 0.12);
+    const r = baseRadius * randRange(0.7, 1.2);
+    points.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r * 0.8 });
+  }
+  return points;
+}
+
+const QUICK_SHAPES = [
+  { id: "square", label: "Štvorec", Icon: Square, generate: generateDeformedSquare },
+  { id: "triangle", label: "Trojuholník", Icon: Triangle, generate: generateDeformedTriangle },
+  { id: "circle", label: "Kruh", Icon: Circle, generate: generateDeformedCircle },
+] as const;
 
 function perpendicularDistance(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x;
@@ -168,6 +238,15 @@ export function ShapeSketchPad({ onChange, initialShapes }: Props) {
     redrawCanvas([]);
   }
 
+  function addQuickShape(generate: () => Point[]) {
+    if (shapes.length >= MAX_SHAPES) return;
+    setShapes((prev) => {
+      const next = [...prev, generate()];
+      onChange(next);
+      return next;
+    });
+  }
+
   function removeShape(i: number) {
     setShapes((prev) => {
       const next = prev.filter((_, idx) => idx !== i);
@@ -213,6 +292,22 @@ export function ShapeSketchPad({ onChange, initialShapes }: Props) {
             </span>
           </div>
         )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {QUICK_SHAPES.map(({ id, label, Icon, generate }) => (
+          <button
+            key={id}
+            type="button"
+            disabled={full}
+            title={`Pridať zdeformovaný tvar: ${label}`}
+            onClick={() => addQuickShape(generate)}
+            className="flex h-9 items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold text-[#6b675e] shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+          >
+            <Icon size={13} />
+            {label}
+          </button>
+        ))}
       </div>
 
       {shapes.length > 0 && (
