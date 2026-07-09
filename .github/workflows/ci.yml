@@ -42,14 +42,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '22'
 
       - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm install
+        run: npm install
 
       - name: Build check
-        run: |
-          cd frontend
-          npm run build
+        run: npm run build
